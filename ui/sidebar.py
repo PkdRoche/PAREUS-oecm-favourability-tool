@@ -5,6 +5,7 @@ from pathlib import Path
 from shapely.geometry import box
 
 
+@st.cache_resource
 def load_config_defaults():
     """
     Load default parameter values from config/criteria_defaults.yaml.
@@ -26,6 +27,7 @@ def load_config_defaults():
         return {}
 
 
+@st.cache_resource
 def load_settings():
     """
     Load general settings from config/settings.yaml.
@@ -203,9 +205,20 @@ def render_sidebar():
 
         if nuts2_gdf is not None:
             countries = get_countries(nuts2_gdf)
+
+            # One-time restore of a NUTS2 region loaded from a .ini project
+            # (see tab_data_upload.py). Pre-seeds the keyed widgets' session
+            # state before they're instantiated — Streamlit then uses that
+            # value as the widget's current selection instead of the default
+            # index below, and normal interactive changes take over from there.
+            _pending_nuts_id = st.session_state.pop('_pending_nuts_id', None)
+            if _pending_nuts_id and _pending_nuts_id[:2] in countries:
+                st.session_state['sidebar_study_country'] = _pending_nuts_id[:2]
+
             default_country_idx = countries.index("FR") if "FR" in countries else 0
             selected_country = st.sidebar.selectbox(
-                "Country", options=countries, index=default_country_idx
+                "Country", options=countries, index=default_country_idx,
+                key='sidebar_study_country'
             )
             nuts2_regions = get_nuts2_for_country(nuts2_gdf, selected_country)
             region_options = [
@@ -213,10 +226,18 @@ def render_sidebar():
             ]
             region_nuts_ids = nuts2_regions['NUTS_ID'].tolist()
             if region_options:
+                if _pending_nuts_id and _pending_nuts_id in region_nuts_ids:
+                    st.session_state['sidebar_study_region_idx'] = region_nuts_ids.index(_pending_nuts_id)
+                elif st.session_state.get('sidebar_study_region_idx', 0) >= len(region_options):
+                    # Country changed (manually or via restore) and the previously
+                    # stored index is out of range for the new region list.
+                    st.session_state['sidebar_study_region_idx'] = 0
+
                 selected_region_idx = st.sidebar.selectbox(
                     "NUTS2 Region",
                     options=range(len(region_options)),
                     format_func=lambda i: region_options[i],
+                    key='sidebar_study_region_idx',
                 )
                 study_area_nuts_id = region_nuts_ids[selected_region_idx]
                 study_area_name = nuts2_regions.iloc[selected_region_idx]['NUTS_NAME']

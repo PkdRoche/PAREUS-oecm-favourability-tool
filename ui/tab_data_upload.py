@@ -40,6 +40,10 @@ def _native_browse(filetypes: list[tuple]) -> str:
         return result.stdout.strip()
     except Exception as e:
         logger.warning(f"Native file dialog failed: {e}")
+        st.error(
+            "Could not open the native file browser. "
+            "Please paste the file path directly into the text field below."
+        )
         return ''
 
 
@@ -87,6 +91,24 @@ def _validate_layer(criterion_key: str, file_path: str) -> None:
         logger.warning("Validation function not available — skipping validation")
         return
 
+    # Check the source file's CRS directly (independent of rescaling/validation
+    # below) so a missing or non-EPSG:3035 CRS is surfaced visibly in the UI
+    # instead of being silently assumed/left uncorrected.
+    crs_warning = None
+    try:
+        import rasterio as _rasterio_crs_check
+        with _rasterio_crs_check.open(file_path) as _src:
+            _orig_crs = _src.crs
+        if _orig_crs is None:
+            crs_warning = "No CRS embedded in file — assumed EPSG:3035. Please verify this is correct."
+        elif _orig_crs.to_epsg() != 3035:
+            crs_warning = (
+                f"File CRS is EPSG:{_orig_crs.to_epsg()}, not EPSG:3035 — "
+                "results may be spatially incorrect."
+            )
+    except Exception as e:
+        logger.warning(f"Could not read CRS for {criterion_key}: {e}")
+
     # CLC land use values are categorical integer codes — no rescaling needed
     if criterion_key == 'landuse':
         logger.info("Skipping validation for CLC land use layer (categorical codes, no rescaling)")
@@ -98,7 +120,8 @@ def _validate_layer(criterion_key: str, file_path: str) -> None:
             'expected_max': 523,
             'rescaled': False,
             'method': 'none',
-            'warning': None
+            'warning': None,
+            'crs_warning': crs_warning
         }
         st.session_state[f"{criterion_key}_validated_path"] = file_path
         return
@@ -122,7 +145,8 @@ def _validate_layer(criterion_key: str, file_path: str) -> None:
                 profile=profile
             )
 
-            # Store validation report
+            # Store validation report (augmented with the CRS check from above)
+            report['crs_warning'] = crs_warning
             st.session_state['validation_reports'][criterion_key] = report
 
             # If rescaling occurred, save to new temp file and update path
@@ -170,6 +194,13 @@ def _save_project_ini(filepath: str) -> None:
     if nuts_path:
         config['nuts']['path'] = str(nuts_path)
 
+    # Study area section — Eurostat-selected NUTS2 region (Country/NUTS2 Region
+    # dropdowns in the sidebar). Only meaningful when not using a local NUTS
+    # file override above, and not a manual bounding box ('CUSTOM').
+    study_area_nuts_id = st.session_state.get('parameters', {}).get('study_area_nuts_id')
+    if study_area_nuts_id and study_area_nuts_id != 'CUSTOM':
+        config['study_area'] = {'nuts_id': str(study_area_nuts_id)}
+
     # WDPA section
     config['wdpa'] = {}
     wdpa_path = st.session_state.get('wdpa_file')
@@ -212,7 +243,10 @@ def _load_project_ini(filepath: str) -> dict:
     config = configparser.ConfigParser()
     config.read(filepath)
 
-    result = {'nuts_path': None, 'wdpa_path': None, 'raster_paths': {}, 'settings': {}, 'errors': []}
+    result = {
+        'nuts_path': None, 'nuts_id': None, 'wdpa_path': None,
+        'raster_paths': {}, 'settings': {}, 'errors': []
+    }
 
     # NUTS
     nuts_path = config.get('nuts', 'path', fallback=None)
@@ -220,6 +254,9 @@ def _load_project_ini(filepath: str) -> dict:
         result['nuts_path'] = nuts_path
     elif nuts_path:
         result['errors'].append(f"NUTS file not found: {nuts_path}")
+
+    # Study area — Eurostat-selected NUTS2 region ID (e.g. "FRF1")
+    result['nuts_id'] = config.get('study_area', 'nuts_id', fallback=None)
 
     # WDPA
     wdpa_path = config.get('wdpa', 'path', fallback=None)
@@ -319,6 +356,12 @@ def render():
                     st.session_state['nuts_file'] = project['nuts_path']
                     st.session_state['nuts_direct_path'] = project['nuts_path']
                     st.session_state.pop('nuts_gdf_cache', None)
+
+                # Study area — Eurostat-selected NUTS2 region (Country/NUTS2
+                # Region dropdowns in the sidebar). Picked up once by
+                # render_sidebar() on its next run to restore the selection.
+                if project.get('nuts_id'):
+                    st.session_state['_pending_nuts_id'] = project['nuts_id']
 
                 # WDPA — set widget key so the text input renders with the path
                 if project['wdpa_path']:
@@ -752,6 +795,9 @@ def render():
                             if report.get('warning'):
                                 st.warning(f"⚠️ {report['warning']}")
 
+                            if report.get('crs_warning'):
+                                st.warning(f"⚠️ {report['crs_warning']}")
+
                     elif key in uploaded_rasters:
                         st.caption("Uploaded — validation pending")
                     else:
@@ -765,7 +811,7 @@ def render():
                             st.error("⚪ Error")
                         elif report.get('rescaled'):
                             st.info("🔵 Auto-rescaled")
-                        elif report.get('warning'):
+                        elif report.get('warning') or report.get('crs_warning'):
                             st.warning("🟡 Warning")
                         else:
                             st.success("🟢 OK")

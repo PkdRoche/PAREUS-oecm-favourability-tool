@@ -13,6 +13,26 @@ from shapely.ops import unary_union
 
 logger = logging.getLogger(__name__)
 
+# Canonical IUCN protection-strictness order (least to most permissive),
+# used to sort category axes/tables instead of plain alphabetical sort
+# (which incorrectly interleaves e.g. "Ia" between "IV" and "V").
+_IUCN_CATEGORY_ORDER = [
+    'I', 'Ia', 'Ib', 'II', 'III', 'IV', 'V', 'VI',
+    'Not Reported', 'Not Applicable', 'Not Assigned',
+]
+
+
+def iucn_category_sort_key(category: str):
+    """Sort key placing IUCN categories in canonical order (I, Ia, Ib, II, ...).
+
+    Categories not in the standard list are sorted alphabetically after the
+    known ones. 'outside' is not included here — callers append it last.
+    """
+    try:
+        return (0, _IUCN_CATEGORY_ORDER.index(category))
+    except ValueError:
+        return (1, str(category))
+
 
 def zonal_stats_by_pa_class(
     pa_gdf: gpd.GeoDataFrame,
@@ -299,10 +319,16 @@ def criterion_coverage_summary(
         values='mean'
     )
 
-    # Sort index: put 'outside' last if present
+    # Sort index in canonical IUCN order (I, Ia, Ib, II, III, IV, V, VI, ...),
+    # with 'outside' last if present.
     if 'outside' in pivot.index:
-        other_classes = sorted([idx for idx in pivot.index if idx != 'outside'])
+        other_classes = sorted(
+            [idx for idx in pivot.index if idx != 'outside'],
+            key=iucn_category_sort_key
+        )
         pivot = pivot.reindex(other_classes + ['outside'])
+    else:
+        pivot = pivot.reindex(sorted(pivot.index, key=iucn_category_sort_key))
 
     logger.info(
         f"Coverage summary created: {len(pivot)} IUCN categories × "

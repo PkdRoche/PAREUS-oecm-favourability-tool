@@ -1,4 +1,5 @@
 """NUTS2 region loader for Eurostat administrative boundaries."""
+import io
 import streamlit as st
 import geopandas as gpd
 import requests
@@ -50,8 +51,9 @@ def load_nuts2(year: int = 2021, scale: str = "20M") -> gpd.GeoDataFrame:
             f"Failed to download NUTS2 boundaries from Eurostat: {e}"
         )
 
-    # Load GeoJSON into GeoDataFrame
-    gdf = gpd.read_file(url)
+    # Load GeoJSON into GeoDataFrame from the already-downloaded bytes
+    # (avoids re-downloading the same URL a second time via gpd.read_file(url))
+    gdf = gpd.read_file(io.BytesIO(response.content))
 
     # Filter to NUTS2 level only (LEVL_CODE == 2)
     gdf_nuts2 = gdf[gdf['LEVL_CODE'] == 2].copy()

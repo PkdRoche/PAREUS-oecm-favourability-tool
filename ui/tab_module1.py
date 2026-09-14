@@ -33,9 +33,17 @@ def load_iucn_classification():
         return {}
 
 
+@st.fragment
 def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
     """
     Render Module 1 interface with WDPA loading, coverage stats, and gap analysis.
+
+    Decorated with @st.fragment so interactions inside this tab (Run Gap
+    Analysis, Compute Ecosystem RI, etc.) do not trigger a full app rerun —
+    and therefore do not re-trigger Module 2's MCE recomputation. All
+    mutable state is re-read from st.session_state below rather than relying
+    on the pa_gdf/territory_geom/ecosystem_layer arguments, since those are
+    only refreshed on a full rerun (not on a fragment-scoped rerun).
 
     Parameters
     ----------
@@ -116,6 +124,7 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
         coverage_by_class,
         kmgbf_indicator
     )
+    from modules.module1_protected_areas.zonal_stats import iucn_category_sort_key
     from modules.module1_protected_areas.representativity import (
         propose_group_a_weights
     )
@@ -203,10 +212,20 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
     # Load colour scheme
     iucn_classes = load_iucn_classification()
 
-    # Reproject to EPSG:4326 for folium (needs lat/lon)
+    # Reproject to EPSG:4326 for folium (needs lat/lon). Cached in session
+    # state keyed on pa_gdf's identity — pa_gdf keeps the same identity
+    # across fragment reruns once it's already in EPSG:3035 (see the CRS
+    # guard above), so this avoids re-reprojecting on every interaction
+    # inside this tab (Run Gap Analysis, Compute Ecosystem RI, etc.).
     import geopandas as gpd
     from shapely.geometry import mapping
-    pa_gdf_4326 = pa_gdf.to_crs('EPSG:4326')
+    _pa_cache_key = id(pa_gdf)
+    _pa_cache = st.session_state.get('_pa_gdf_4326_cache')
+    if _pa_cache is not None and _pa_cache.get('key') == _pa_cache_key:
+        pa_gdf_4326 = _pa_cache['gdf']
+    else:
+        pa_gdf_4326 = pa_gdf.to_crs('EPSG:4326')
+        st.session_state['_pa_gdf_4326_cache'] = {'key': _pa_cache_key, 'gdf': pa_gdf_4326}
     territory_gs = gpd.GeoSeries([territory_geom], crs='EPSG:3035').to_crs('EPSG:4326')
     centroid = territory_gs.iloc[0].centroid
 
@@ -356,7 +375,11 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
             # Compute total union once — reused for TOTAL row (avoids 3× union_all)
             total_pa_area_ha = pa_gdf.geometry.union_all().area / 10000.0
             iucn_rows = []
-            for cat, grp in pa_gdf.groupby(iucn_col_stats):
+            cats_sorted_stats = sorted(
+                pa_gdf[iucn_col_stats].unique(), key=iucn_category_sort_key
+            )
+            for cat in cats_sorted_stats:
+                grp = pa_gdf[pa_gdf[iucn_col_stats] == cat]
                 net_area = grp.geometry.union_all().area / 10000.0
                 iucn_rows.append({
                     'IUCN Category': cat,
@@ -702,7 +725,8 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
             # Import zonal stats functions
             from modules.module1_protected_areas.zonal_stats import (
                 zonal_stats_by_pa_class,
-                criterion_coverage_summary
+                criterion_coverage_summary,
+                iucn_category_sort_key
             )
 
             if st.button("Compute Criterion Profiles"):
@@ -756,7 +780,10 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
                         if crit == 'anthropogenic_pressure':
                             chart_data.loc[mask, 'mean'] = 1.0 - chart_data.loc[mask, 'mean']
 
-                    cat_order = sorted([c for c in chart_data['iucn_cat'].unique() if c != 'outside'])
+                    cat_order = sorted(
+                        [c for c in chart_data['iucn_cat'].unique() if c != 'outside'],
+                        key=iucn_category_sort_key
+                    )
                     if 'outside' in chart_data['iucn_cat'].unique():
                         cat_order.append('outside')
 
@@ -826,7 +853,15 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
                             continue
                         criterion_data = zonal_df[zonal_df['criterion'] == criterion]
 
-                        for iucn_cat in criterion_data['iucn_cat'].unique():
+                        _cats_present = criterion_data['iucn_cat'].unique()
+                        _cats_sorted = sorted(
+                            [c for c in _cats_present if c != 'outside'],
+                            key=iucn_category_sort_key
+                        )
+                        if 'outside' in _cats_present:
+                            _cats_sorted.append('outside')
+
+                        for iucn_cat in _cats_sorted:
                             class_data = criterion_data[criterion_data['iucn_cat'] == iucn_cat]
 
                             if len(class_data) > 0:
@@ -844,12 +879,16 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
                     detailed_df = pd.DataFrame(detailed_stats)
                     st.dataframe(detailed_df, hide_index=True, width='stretch')
 
-                # Row 4: CLC land use class breakdown
+                # Row 4: CLC land use class breakdown — whole study area + per IUCN category
                 if 'landuse' in st.session_state.get('criterion_raster_paths', {}):
                     st.markdown("#### Land Use Composition (CLC Level 1)")
-                    st.caption("Pixel counts per Corine Land Cover Level 1 category within the study area.")
+                    st.caption(
+                        "Share of each Corine Land Cover Level 1 category (% of valid pixels), "
+                        "for the whole study area and within each IUCN protection category."
+                    )
                     try:
                         import rasterio as _rio
+                        from rasterio.features import rasterize as _rasterize_clc
 
                         # CLC Level 1 labels (first digit of CLC code)
                         _CLC_LEVEL1_LABELS = {
@@ -865,27 +904,76 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
                         with _rio.open(lu_path) as src:
                             lu_array = src.read(1).astype(float)
                             lu_nodata = src.nodata
+                            lu_transform = src.transform
+                            lu_crs = src.crs
                         if lu_nodata is not None:
                             lu_array[lu_array == lu_nodata] = np.nan
 
-                        # Aggregate to Level 1 using first digit of CLC code
-                        valid_codes = lu_array[~np.isnan(lu_array)].astype(int)
-                        level1_codes = valid_codes // 100  # 311 → 3, 112 → 1, etc.
-                        unique_l1, counts_l1 = np.unique(level1_codes, return_counts=True)
-                        total_valid = len(valid_codes)
+                        h_lu, w_lu = lu_array.shape
+                        valid_mask_all = ~np.isnan(lu_array)
+                        level1_all = np.full(lu_array.shape, -1, dtype=int)
+                        level1_all[valid_mask_all] = (
+                            lu_array[valid_mask_all].astype(int) // 100
+                        )  # 311 → 3, 112 → 1, etc.
 
+                        def _clc_pct_by_level1(zone_mask):
+                            """Return {level1_code: pct_of_zone} for valid pixels inside zone_mask."""
+                            selected = level1_all[zone_mask & valid_mask_all]
+                            if selected.size == 0:
+                                return {}
+                            vals, counts = np.unique(selected, return_counts=True)
+                            return {
+                                int(v): 100.0 * c / selected.size
+                                for v, c in zip(vals, counts)
+                            }
+
+                        # Column 1: whole study area (the raster's full valid extent)
+                        columns_pct = {
+                            'Whole Study Area': _clc_pct_by_level1(
+                                np.ones((h_lu, w_lu), dtype=bool)
+                            )
+                        }
+
+                        # One column per IUCN category, in canonical order
+                        iucn_col_clc = 'IUCN_MAX' if 'IUCN_MAX' in pa_gdf.columns else 'IUCN_CAT'
+                        if iucn_col_clc in pa_gdf.columns:
+                            pa_gdf_lu = (
+                                pa_gdf.to_crs(lu_crs) if pa_gdf.crs != lu_crs else pa_gdf
+                            )
+                            cats_sorted_clc = sorted(
+                                pa_gdf_lu[iucn_col_clc].unique(), key=iucn_category_sort_key
+                            )
+                            for cat in cats_sorted_clc:
+                                grp = pa_gdf_lu[pa_gdf_lu[iucn_col_clc] == cat]
+                                geoms = [
+                                    (g, 1) for g in grp.geometry
+                                    if g is not None and not g.is_empty
+                                ]
+                                if not geoms:
+                                    continue
+                                cat_mask = _rasterize_clc(
+                                    shapes=geoms,
+                                    out_shape=(h_lu, w_lu),
+                                    transform=lu_transform,
+                                    fill=0,
+                                    dtype='uint8'
+                                ).astype(bool)
+                                columns_pct[str(cat)] = _clc_pct_by_level1(cat_mask)
+
+                        # Build wide table: rows = CLC L1 categories, columns = zones
+                        all_l1_codes = sorted({
+                            code for pct_map in columns_pct.values() for code in pct_map
+                        })
                         clc_rows = []
-                        for l1, cnt in sorted(zip(unique_l1, counts_l1), key=lambda x: -x[1]):
-                            label = _CLC_LEVEL1_LABELS.get(int(l1), f"Unknown ({l1})")
-                            clc_rows.append({
-                                'Level 1': int(l1),
-                                'Category': label,
-                                'Pixel Count': int(cnt),
-                                '% of area': f"{100.0 * cnt / total_valid:.1f}%"
-                            })
+                        for l1 in all_l1_codes:
+                            label = _CLC_LEVEL1_LABELS.get(l1, f"Unknown ({l1})")
+                            row = {'Level 1': l1, 'Category': label}
+                            for col_name, pct_map in columns_pct.items():
+                                row[col_name] = f"{pct_map.get(l1, 0.0):.1f}%"
+                            clc_rows.append(row)
 
                         clc_table = pd.DataFrame(clc_rows)
-                        st.dataframe(clc_table, hide_index=True, use_container_width=True)
+                        st.dataframe(clc_table, hide_index=True, width='stretch')
 
                     except Exception as e:
                         st.caption(f"CLC breakdown unavailable: {e}")

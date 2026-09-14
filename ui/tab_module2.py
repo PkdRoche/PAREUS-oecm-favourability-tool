@@ -1,4 +1,5 @@
 """Streamlit UI for Module 2 — OECM Favourability Analysis."""
+import logging
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -14,6 +15,8 @@ import base64
 import json
 from datetime import datetime
 import plotly.graph_objects as go
+
+logger = logging.getLogger(__name__)
 
 
 def _to_multipolygon(geom):
@@ -252,8 +255,11 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
             img_pil.save(buffered, format="PNG")
             img_base64 = base64.b64encode(buffered.getvalue()).decode()
 
-            # Create folium map — CartoDB Positron: clean light basemap,
-            # built-in to Folium, no API key, proper attribution in the corner
+            # Create folium map — Esri World Light Gray Canvas: muted, low-contrast
+            # basemap that doesn't compete with the red-yellow-green score overlay
+            # (unlike standard OpenStreetMap, whose greens/tans clash with the
+            # legend). Free, no API key. CartoDB Positron — the original choice —
+            # now requires a CARTO account/API key, so it can't be used unauthenticated.
             center_lat = (south + north) / 2
             center_lon = (west + east) / 2
 
@@ -263,7 +269,8 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                 tiles=None,          # no default tile — we add it named below
             )
             folium.TileLayer(
-                'CartoDB positron',
+                tiles='https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+                attr='Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS user community',
                 name='Basemap',
                 control=True,
             ).add_to(m)
@@ -795,7 +802,11 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                         location=[_center_lat, _center_lon], zoom_start=8,
                         tiles=None,
                     )
-                    folium.TileLayer('CartoDB positron', name='Basemap').add_to(_m_s)
+                    folium.TileLayer(
+                        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+                        attr='Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS user community',
+                        name='Basemap',
+                    ).add_to(_m_s)
                     folium.raster_layers.ImageOverlay(
                         image=f"data:image/png;base64,{_b64_s}",
                         bounds=[[_south, _west], [_north, _east]],
@@ -930,7 +941,11 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                         location=[_centroid.y, _centroid.x], zoom_start=9,
                         tiles=None,
                     )
-                    folium.TileLayer('CartoDB positron', name='Basemap').add_to(_m_sites)
+                    folium.TileLayer(
+                        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+                        attr='Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS user community',
+                        name='Basemap',
+                    ).add_to(_m_sites)
                     folium.GeoJson(
                         _sites_4326,
                         name='Candidate Sites',
@@ -997,24 +1012,25 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
     with col_exp1:
         if st.button("Export GeoTIFF"):
             try:
-                # Create temp file, close it immediately so rasterio can open it on Windows
-                import tempfile as _tf
-                _tmp = _tf.NamedTemporaryFile(delete=False, suffix='.tif')
-                _tmp_path = _tmp.name
-                _tmp.close()
+                with st.spinner("Exporting GeoTIFF..."):
+                    # Create temp file, close it immediately so rasterio can open it on Windows
+                    import tempfile as _tf
+                    _tmp = _tf.NamedTemporaryFile(delete=False, suffix='.tif')
+                    _tmp_path = _tmp.name
+                    _tmp.close()
 
-                export_module.export_geotiff(
-                    array=score_array,
-                    profile=profile,
-                    output_path=_tmp_path
-                )
-                with open(_tmp_path, 'rb') as f:
-                    geotiff_bytes = f.read()
-                try:
-                    import os as _os
-                    _os.unlink(_tmp_path)
-                except Exception:
-                    pass
+                    export_module.export_geotiff(
+                        array=score_array,
+                        profile=profile,
+                        output_path=_tmp_path
+                    )
+                    with open(_tmp_path, 'rb') as f:
+                        geotiff_bytes = f.read()
+                    try:
+                        import os as _os
+                        _os.unlink(_tmp_path)
+                    except Exception:
+                        pass
 
                 st.download_button(
                     label="Download GeoTIFF",
@@ -1030,39 +1046,40 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
     with col_exp2:
         if st.button("Export Shapefile (ZIP)"):
             try:
-                import zipfile
+                with st.spinner("Exporting shapefile..."):
+                    import zipfile
 
-                # Create temporary directory for shapefile components
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    shp_path = Path(tmpdir) / "favourable_zones.shp"
+                    # Create temporary directory for shapefile components
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        shp_path = Path(tmpdir) / "favourable_zones.shp"
 
-                    export_module.export_shapefile(
-                        score_array=score_array,
-                        profile=profile,
-                        threshold=export_threshold,
-                        output_path=str(shp_path)
-                    )
+                        export_module.export_shapefile(
+                            score_array=score_array,
+                            profile=profile,
+                            threshold=export_threshold,
+                            output_path=str(shp_path)
+                        )
 
-                    # Zip all shapefile components
-                    zip_path = Path(tmpdir) / "favourable_zones.zip"
-                    with zipfile.ZipFile(zip_path, 'w') as zipf:
-                        for ext in ['.shp', '.shx', '.dbf', '.prj', '.cpg']:
-                            component = shp_path.with_suffix(ext)
-                            if component.exists():
-                                zipf.write(component, component.name)
+                        # Zip all shapefile components
+                        zip_path = Path(tmpdir) / "favourable_zones.zip"
+                        with zipfile.ZipFile(zip_path, 'w') as zipf:
+                            for ext in ['.shp', '.shx', '.dbf', '.prj', '.cpg']:
+                                component = shp_path.with_suffix(ext)
+                                if component.exists():
+                                    zipf.write(component, component.name)
 
-                    # Read zip for download
-                    with open(zip_path, 'rb') as f:
-                        zip_bytes = f.read()
+                        # Read zip for download
+                        with open(zip_path, 'rb') as f:
+                            zip_bytes = f.read()
 
-                    st.download_button(
-                        label="Download Shapefile (ZIP)",
-                        data=zip_bytes,
-                        file_name="favourable_zones.zip",
-                        mime="application/zip"
-                    )
+                        st.download_button(
+                            label="Download Shapefile (ZIP)",
+                            data=zip_bytes,
+                            file_name="favourable_zones.zip",
+                            mime="application/zip"
+                        )
 
-                    st.success(f"Shapefile ready (threshold: {export_threshold:.2f})!")
+                        st.success(f"Shapefile ready (threshold: {export_threshold:.2f})!")
 
             except Exception as e:
                 st.error(f"Shapefile export failed: {str(e)}")
@@ -1070,54 +1087,55 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
     with col_exp3:
         if st.button("Export CSV Stats"):
             try:
-                # Build comprehensive stats table
-                pa_gdf = st.session_state.get('pa_gdf')
-                wdpa_area_ha = 0.0
-                n_pa_sites = 0
-                if pa_gdf is not None:
-                    try:
-                        wdpa_area_ha = float(pa_gdf.geometry.union_all().area) / 10000.0
-                        n_pa_sites = len(pa_gdf)
-                    except Exception:
-                        pass
+                with st.spinner("Exporting CSV statistics..."):
+                    # Build comprehensive stats table
+                    pa_gdf = st.session_state.get('pa_gdf')
+                    wdpa_area_ha = 0.0
+                    n_pa_sites = 0
+                    if pa_gdf is not None:
+                        try:
+                            wdpa_area_ha = float(pa_gdf.geometry.union_all().area) / 10000.0
+                            n_pa_sites = len(pa_gdf)
+                        except Exception:
+                            pass
 
-                stats_df = pd.DataFrame([
-                    {'metric': 'Territory grid area (ha)',
-                     'value': f"{territory_area_ha:.0f}"},
-                    {'metric': 'Eligible area — passed Group D (ha)',
-                     'value': f"{eligible_area_ha:.0f}"},
-                    {'metric': 'Eliminated — high pressure or incompatible LU (ha)',
-                     'value': f"{n_eliminated * pixel_area_ha:.0f}"},
-                    {'metric': 'OECM favourable area — MCE Group C ≥ 0.10 (ha)',
-                     'value': f"{oecm_area_ha:.0f}"},
-                    {'metric': 'Low use-function area — MCE Group C < 0.10 (ha)',
-                     'value': f"{classical_pa_area_ha:.0f}"},
-                    {'metric': 'Median favourability score (eligible pixels)',
-                     'value': f"{median_score:.3f}"},
-                    {'metric': 'Existing WDPA protected area — union (ha)',
-                     'value': f"{wdpa_area_ha:.0f}" if wdpa_area_ha > 0 else 'Not loaded'},
-                    {'metric': 'Existing WDPA sites (count)',
-                     'value': str(n_pa_sites) if n_pa_sites > 0 else 'Not loaded'},
-                ])
+                    stats_df = pd.DataFrame([
+                        {'metric': 'Territory grid area (ha)',
+                         'value': f"{territory_area_ha:.0f}"},
+                        {'metric': 'Eligible area — passed Group D (ha)',
+                         'value': f"{eligible_area_ha:.0f}"},
+                        {'metric': 'Eliminated — high pressure or incompatible LU (ha)',
+                         'value': f"{n_eliminated * pixel_area_ha:.0f}"},
+                        {'metric': 'OECM favourable area — MCE Group C ≥ 0.10 (ha)',
+                         'value': f"{oecm_area_ha:.0f}"},
+                        {'metric': 'Low use-function area — MCE Group C < 0.10 (ha)',
+                         'value': f"{classical_pa_area_ha:.0f}"},
+                        {'metric': 'Median favourability score (eligible pixels)',
+                         'value': f"{median_score:.3f}"},
+                        {'metric': 'Existing WDPA protected area — union (ha)',
+                         'value': f"{wdpa_area_ha:.0f}" if wdpa_area_ha > 0 else 'Not loaded'},
+                        {'metric': 'Existing WDPA sites (count)',
+                         'value': str(n_pa_sites) if n_pa_sites > 0 else 'Not loaded'},
+                    ])
 
-                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp:
-                    export_module.export_csv_stats(
-                        stats_df=stats_df,
-                        output_path=tmp.name
-                    )
+                    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp:
+                        export_module.export_csv_stats(
+                            stats_df=stats_df,
+                            output_path=tmp.name
+                        )
 
-                    # Read file for download
-                    with open(tmp.name, 'r') as f:
-                        csv_data = f.read()
+                        # Read file for download
+                        with open(tmp.name, 'r') as f:
+                            csv_data = f.read()
 
-                    st.download_button(
-                        label="Download CSV",
-                        data=csv_data,
-                        file_name="favourability_statistics.csv",
-                        mime="text/csv"
-                    )
+                        st.download_button(
+                            label="Download CSV",
+                            data=csv_data,
+                            file_name="favourability_statistics.csv",
+                            mime="text/csv"
+                        )
 
-                    st.success("CSV ready for download!")
+                        st.success("CSV ready for download!")
 
             except Exception as e:
                 st.error(f"CSV export failed: {str(e)}")
@@ -1125,82 +1143,83 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
     with col_exp4:
         if st.button("Generate PDF Report"):
             try:
-                # Create temporary map image from score_array
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
-                    import matplotlib.cm as mcm
-                    _cmap = mcm.get_cmap('RdYlGn')
-                    _norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
-                    _rgba = np.zeros((*score_array.shape, 4), dtype=np.uint8)
-                    _vm = ~np.isnan(score_array)
-                    _rgba[_vm] = (_cmap(_norm(score_array[_vm])) * 255).astype(np.uint8)
-                    fig_map, ax = plt.subplots(figsize=(10, 8))
-                    ax.imshow(_rgba)
-                    ax.axis('off')
-                    plt.savefig(tmp_img.name, bbox_inches='tight', dpi=150)
-                    plt.close()
+                with st.spinner("Generating PDF report..."):
+                    # Create temporary map image from score_array
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
+                        import matplotlib.cm as mcm
+                        _cmap = mcm.get_cmap('RdYlGn')
+                        _norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
+                        _rgba = np.zeros((*score_array.shape, 4), dtype=np.uint8)
+                        _vm = ~np.isnan(score_array)
+                        _rgba[_vm] = (_cmap(_norm(score_array[_vm])) * 255).astype(np.uint8)
+                        fig_map, ax = plt.subplots(figsize=(10, 8))
+                        ax.imshow(_rgba)
+                        ax.axis('off')
+                        plt.savefig(tmp_img.name, bbox_inches='tight', dpi=150)
+                        plt.close()
 
-                    # Build comprehensive stats table for PDF
-                    pa_gdf = st.session_state.get('pa_gdf')
-                    wdpa_area_ha_pdf = 0.0
-                    n_pa_sites_pdf = 0
-                    if pa_gdf is not None:
-                        try:
-                            wdpa_area_ha_pdf = float(pa_gdf.geometry.union_all().area) / 10000.0
-                            n_pa_sites_pdf = len(pa_gdf)
-                        except Exception:
-                            pass
+                        # Build comprehensive stats table for PDF
+                        pa_gdf = st.session_state.get('pa_gdf')
+                        wdpa_area_ha_pdf = 0.0
+                        n_pa_sites_pdf = 0
+                        if pa_gdf is not None:
+                            try:
+                                wdpa_area_ha_pdf = float(pa_gdf.geometry.union_all().area) / 10000.0
+                                n_pa_sites_pdf = len(pa_gdf)
+                            except Exception:
+                                pass
 
-                    stats_df = pd.DataFrame([
-                        {'Metric': 'Territory grid area (ha)',
-                         'Value': f"{territory_area_ha:.0f}"},
-                        {'Metric': 'Eligible area — passed Group D (ha)',
-                         'Value': f"{eligible_area_ha:.0f}"},
-                        {'Metric': 'Eliminated — pressure / incompatible LU (ha)',
-                         'Value': f"{n_eliminated * pixel_area_ha:.0f}"},
-                        {'Metric': 'OECM favourable area — MCE Group C ≥ 0.10 (ha)',
-                         'Value': f"{oecm_area_ha:.0f}"},
-                        {'Metric': 'Low use-function — MCE Group C < 0.10 (ha)',
-                         'Value': f"{classical_pa_area_ha:.0f}"},
-                        {'Metric': 'Median favourability score (eligible pixels)',
-                         'Value': f"{median_score:.3f}"},
-                        {'Metric': 'Existing WDPA protected area — union (ha)',
-                         'Value': f"{wdpa_area_ha_pdf:.0f}" if wdpa_area_ha_pdf > 0 else 'Not loaded'},
-                        {'Metric': 'Existing WDPA sites (count)',
-                         'Value': str(n_pa_sites_pdf) if n_pa_sites_pdf > 0 else 'Not loaded'},
-                    ])
+                        stats_df = pd.DataFrame([
+                            {'Metric': 'Territory grid area (ha)',
+                             'Value': f"{territory_area_ha:.0f}"},
+                            {'Metric': 'Eligible area — passed Group D (ha)',
+                             'Value': f"{eligible_area_ha:.0f}"},
+                            {'Metric': 'Eliminated — pressure / incompatible LU (ha)',
+                             'Value': f"{n_eliminated * pixel_area_ha:.0f}"},
+                            {'Metric': 'OECM favourable area — MCE Group C ≥ 0.10 (ha)',
+                             'Value': f"{oecm_area_ha:.0f}"},
+                            {'Metric': 'Low use-function — MCE Group C < 0.10 (ha)',
+                             'Value': f"{classical_pa_area_ha:.0f}"},
+                            {'Metric': 'Median favourability score (eligible pixels)',
+                             'Value': f"{median_score:.3f}"},
+                            {'Metric': 'Existing WDPA protected area — union (ha)',
+                             'Value': f"{wdpa_area_ha_pdf:.0f}" if wdpa_area_ha_pdf > 0 else 'Not loaded'},
+                            {'Metric': 'Existing WDPA sites (count)',
+                             'Value': str(n_pa_sites_pdf) if n_pa_sites_pdf > 0 else 'Not loaded'},
+                        ])
 
-                    # Add timestamp and spec version to params
-                    if params is not None:
-                        params_full = params.copy()
-                        params_full['timestamp'] = datetime.now().isoformat()
-                        params_full['spec_version'] = 'v0.1'
-                    else:
-                        params_full = {
-                            'timestamp': datetime.now().isoformat(),
-                            'spec_version': 'v0.1'
-                        }
+                        # Add timestamp and spec version to params
+                        if params is not None:
+                            params_full = params.copy()
+                            params_full['timestamp'] = datetime.now().isoformat()
+                            params_full['spec_version'] = 'v0.1'
+                        else:
+                            params_full = {
+                                'timestamp': datetime.now().isoformat(),
+                                'spec_version': 'v0.1'
+                            }
 
-                    # Generate PDF
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_pdf:
-                        export_module.generate_pdf_report(
-                            map_image_path=tmp_img.name,
-                            stats_df=stats_df,
-                            parameters=params_full,
-                            output_path=tmp_pdf.name
-                        )
+                        # Generate PDF
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_pdf:
+                            export_module.generate_pdf_report(
+                                map_image_path=tmp_img.name,
+                                stats_df=stats_df,
+                                parameters=params_full,
+                                output_path=tmp_pdf.name
+                            )
 
-                        # Read PDF for download
-                        with open(tmp_pdf.name, 'rb') as f:
-                            pdf_bytes = f.read()
+                            # Read PDF for download
+                            with open(tmp_pdf.name, 'rb') as f:
+                                pdf_bytes = f.read()
 
-                        st.download_button(
-                            label="Download PDF Report",
-                            data=pdf_bytes,
-                            file_name="favourability_report.pdf",
-                            mime="application/pdf"
-                        )
+                            st.download_button(
+                                label="Download PDF Report",
+                                data=pdf_bytes,
+                                file_name="favourability_report.pdf",
+                                mime="application/pdf"
+                            )
 
-                        st.success("PDF report ready for download!")
+                            st.success("PDF report ready for download!")
 
             except ImportError:
                 st.error("PDF generation requires reportlab. Install with: pip install reportlab")
@@ -1249,3 +1268,345 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
         "All parameters used in MCE computation are logged for full reproducibility. "
         "Include this JSON file with exported outputs to document analysis settings."
     )
+
+
+@st.fragment
+def render_module2_tab():
+    """
+    Orchestrate Module 2 — load/align rasters, run the MCE computation, and
+    render results. Decorated with @st.fragment so that interactions inside
+    other tabs (e.g. Module 1's "Run Gap Analysis") no longer force this
+    tab's full raster alignment + MCE recomputation on every app rerun.
+
+    All inputs (parameters, raster paths, gap layers, PA data) are read
+    fresh from st.session_state on every call, since a fragment-scoped
+    rerun does not re-execute app.py's top-level script.
+    """
+    from ui.sidebar import load_settings
+
+    st.header("Module 2 — OECM Favourability Analysis")
+
+    parameters = st.session_state.get('parameters', {})
+
+    # Check if data has been uploaded
+    data_ready_module2 = st.session_state.get('data_ready_module2', False)
+
+    if not data_ready_module2:
+        st.info(
+            "Upload all 6 criterion rasters in the **① Data Upload** tab first."
+        )
+    else:
+        # Retrieve raster paths from session state
+        raster_paths = st.session_state.get('criterion_raster_paths', {})
+
+        # Check if weights sum to 1.0
+        weight_sum = parameters.get('W_A', 0) + parameters.get('W_B', 0) + parameters.get('W_C', 0)
+        weights_valid = abs(weight_sum - 1.0) < 0.001
+
+        st.markdown("---")
+
+        # -------------------------------------------------------
+        # Cached load + align: only re-runs when files or study
+        # area change. Changing weights/method/threshold does NOT
+        # trigger re-alignment (major speed-up on every re-run).
+        # -------------------------------------------------------
+        @st.cache_data(show_spinner=False)
+        def _load_and_align(paths_frozen, study_area_wkt, resolution, crs):
+            """Load and align all rasters. Cache key = paths + study area.
+
+            When a study area is available, each raster is read via a windowed
+            read limited to the study area bounding box before alignment.
+            This avoids loading full EU-wide extents into memory.
+            """
+            from shapely.wkt import loads as _wkt_loads
+            from modules.module2_favourability import raster_preprocessing as _rp
+            sa_geom = _wkt_loads(study_area_wkt) if study_area_wkt else None
+            raster_dict = {}
+            for name, path in paths_frozen:
+                if sa_geom is not None:
+                    arr, prof = _rp.load_raster_windowed(
+                        path, clip_geom=sa_geom, geom_crs=crs
+                    )
+                else:
+                    arr, prof = _rp.load_raster(path)
+                raster_dict[name] = (arr, prof)
+            return _rp.align_rasters(
+                raster_dict,
+                study_area_geom=sa_geom,
+                resolution=resolution,
+                crs=crs
+            )
+
+        # Build hashable cache key from current raster paths + study area
+        _settings = load_settings()
+        target_resolution = _settings.get('resolution_m', 100.0)
+        target_crs = _settings.get('crs', 'EPSG:3035')
+        study_area_geom = parameters.get('study_area_geometry')
+
+        layer_order = [
+            'ecosystem_condition', 'regulating_es',
+            'anthropogenic_pressure', 'cultural_es',
+            'provisioning_es', 'landuse'
+        ]
+        paths_frozen = tuple((k, raster_paths[k]) for k in layer_order)
+        study_area_wkt = study_area_geom.wkt if study_area_geom else ''
+
+        # Check whether aligned arrays are already in session state for the
+        # current set of paths (so we know if Load & Align has been run)
+        aligned_key = st.session_state.get('_aligned_key')
+        current_key = (paths_frozen, study_area_wkt, target_resolution, target_crs)
+        rasters_aligned = aligned_key == current_key
+
+        # ------------------------------------------------------------------
+        # Step 1 — Load & Align button (only needed when files/area change)
+        # ------------------------------------------------------------------
+        load_col1, load_col2, load_col3 = st.columns([1, 2, 1])
+        with load_col2:
+            load_button = st.button(
+                "Load & Align Rasters",
+                type="secondary" if rasters_aligned else "primary",
+                use_container_width=True,
+                help="Re-run only when you change raster files or the study area."
+            )
+
+        if load_button:
+            with st.spinner("Loading and aligning raster layers (cached after first run)..."):
+                try:
+                    from modules.module2_favourability import mce_engine  # noqa: F401 — ensure importable
+                    aligned = _load_and_align(
+                        paths_frozen, study_area_wkt, target_resolution, target_crs
+                    )
+                    # Store aligned arrays and profile in session state
+                    st.session_state['_aligned_arrays'] = {
+                        k: aligned[k][0] for k in layer_order
+                    }
+                    st.session_state['_aligned_profile'] = aligned['ecosystem_condition'][1]
+                    st.session_state['_aligned_key'] = current_key
+                    # Clear previous MCE results so they are recomputed below
+                    for _k in ('score_array', 'oecm_mask', 'classical_pa_mask',
+                               'eliminatory_mask', 'raster_profile'):
+                        st.session_state.pop(_k, None)
+                    st.success("Rasters loaded and aligned!")
+                    rasters_aligned = True
+                except Exception as e:
+                    st.error(f"Raster loading/alignment failed: {str(e)}")
+                    logger.exception("Raster loading/alignment error:")
+
+        # ------------------------------------------------------------------
+        # Step 2 — MCE computation: auto-runs on every rerun when aligned
+        # ------------------------------------------------------------------
+        if rasters_aligned:
+            if not weights_valid:
+                st.error(
+                    f"Inter-group weights must sum to 1.0 (current sum: {weight_sum:.3f})"
+                )
+            else:
+                from modules.module2_favourability import mce_engine
+
+                aligned_arrays  = st.session_state['_aligned_arrays']
+                reference_profile = st.session_state['_aligned_profile']
+
+                # Prepare weight structure — normalize inter-group weights to exactly
+                # 1.0 to avoid floating-point drift triggering the engine's atol=1e-6 check.
+                _wa, _wb, _wc = parameters['W_A'], parameters['W_B'], parameters['W_C']
+                _wsum = _wa + _wb + _wc
+                weights = {
+                    'inter_group_weights': {
+                        'W_A': _wa / _wsum,
+                        'W_B': _wb / _wsum,
+                        'W_C': _wc / _wsum,
+                    },
+                    'group_a_weights': {
+                        'ecosystem_condition': parameters['w_condition'],
+                        'regulating_es': parameters['w_regulating_es'],
+                        'low_pressure': parameters['w_pressure']
+                    },
+                    'group_b_weights': {
+                        'cultural_es': parameters['w_cultural_es']
+                    },
+                    'group_c_weights': {
+                        'provisioning_es': parameters['w_provisioning_es'],
+                        'compatible_landuse': parameters['w_landuse_compatible']
+                    }
+                }
+
+                # Build gap mask from Module 1 gap layers (if available)
+                gap_mask = None
+                gap_bonus_val = parameters.get('gap_bonus', 0.0)
+                _gap_layers_marker = None
+                if gap_bonus_val > 0.0 and 'gap_layers' in st.session_state:
+                    try:
+                        import numpy as np
+                        from rasterio.features import rasterize as _rasterize
+
+                        gap_layers = st.session_state['gap_layers']
+                        _gap_layers_marker = id(gap_layers)
+                        target_crs_obj = reference_profile['crs']
+                        target_shape = (reference_profile['height'],
+                                        reference_profile['width'])
+                        target_transform = reference_profile['transform']
+
+                        all_geoms = []
+                        for _gkey in ('strict_gaps', 'qualitative_gaps'):
+                            gdf = gap_layers.get(_gkey)
+                            if gdf is not None and len(gdf) > 0:
+                                reprojected = gdf.to_crs(target_crs_obj)
+                                valid = reprojected[
+                                    ~reprojected.geometry.is_empty
+                                    & reprojected.geometry.notnull()
+                                ]
+                                all_geoms.extend(
+                                    (geom, 1) for geom in valid.geometry
+                                )
+
+                        if all_geoms:
+                            gap_raster = _rasterize(
+                                shapes=all_geoms,
+                                out_shape=target_shape,
+                                transform=target_transform,
+                                fill=0,
+                                dtype='uint8'
+                            )
+                            gap_mask = gap_raster.astype(bool)
+                            logger.info(
+                                f"Gap mask built: {np.sum(gap_mask)} gap pixels "
+                                f"out of {gap_mask.size}"
+                            )
+                        else:
+                            logger.info("No gap geometries found, skipping gap bonus")
+                    except Exception as e:
+                        logger.warning(f"Failed to build gap mask: {e}")
+                        gap_mask = None
+
+                # Inform the user if Module 1's gap layers were updated since
+                # the last time this tab computed the gap bonus — since this
+                # tab is now its own fragment, changes made in Module 1's tab
+                # no longer trigger an automatic recompute here.
+                if gap_bonus_val > 0.0 and 'gap_layers' in st.session_state:
+                    _last_marker = st.session_state.get('_gap_layers_marker_used')
+                    if _last_marker is not None and _last_marker != _gap_layers_marker:
+                        st.info(
+                            "Gap layers were updated in Module 1 since the last computation. "
+                            "The gap bonus below has already been recalculated using the "
+                            "latest gap layers."
+                        )
+                    st.session_state['_gap_layers_marker_used'] = _gap_layers_marker
+
+                # ── PA proximity raster (distance transform from WDPA) ──────
+                pa_proximity_raster = None
+                if parameters.get('proximity_bonus', 0.0) > 0.0:
+                    try:
+                        import numpy as np
+                        from scipy.ndimage import distance_transform_edt as _edt
+                        from rasterio.features import rasterize as _rasterize2
+                        pa_gdf_prox = st.session_state.get('pa_gdf')
+                        if pa_gdf_prox is not None and len(pa_gdf_prox) > 0:
+                            _pa_repr = pa_gdf_prox.to_crs(reference_profile['crs'])
+                            _pa_bin  = _rasterize2(
+                                shapes=[(g, 1) for g in _pa_repr.geometry
+                                        if g and not g.is_empty],
+                                out_shape=(reference_profile['height'],
+                                           reference_profile['width']),
+                                transform=reference_profile['transform'],
+                                fill=0, dtype='uint8'
+                            )
+                            pixel_size_m = abs(reference_profile['transform'][0])
+                            # distance_transform_edt returns distance in pixels
+                            pa_proximity_raster = _edt(
+                                1 - _pa_bin
+                            ).astype(np.float32) * pixel_size_m
+                            logger.info("PA proximity raster computed")
+                    except Exception as _e:
+                        logger.warning(f"PA proximity raster failed: {_e}")
+
+                try:
+                    with st.spinner("Computing favourability scores…"):
+                        results = mce_engine.compute_favourability(
+                            ecosystem_condition=aligned_arrays['ecosystem_condition'],
+                            regulating_es=aligned_arrays['regulating_es'],
+                            cultural_es=aligned_arrays['cultural_es'],
+                            provisioning_es=aligned_arrays['provisioning_es'],
+                            anthropogenic_pressure=aligned_arrays['anthropogenic_pressure'],
+                            landuse=aligned_arrays['landuse'],
+                            weights=weights,
+                            method=parameters['method'],
+                            alpha=parameters['alpha'],
+                            threshold_pressure=parameters.get('threshold_pressure', 150.0),
+                            gap_bonus=gap_bonus_val,
+                            gap_mask=gap_mask,
+                            percentile_norm=parameters.get('percentile_norm', False),
+                            proximity_bonus=parameters.get('proximity_bonus', 0.0),
+                            proximity_decay_km=parameters.get('proximity_decay_km', 10.0),
+                            pa_proximity_raster=pa_proximity_raster,
+                        )
+
+                    score_out        = results['score'].copy()
+                    oecm_mask_out    = results['oecm_mask'].copy()
+                    classical_out    = results['classical_pa_mask'].copy()
+                    elim_mask_out    = results['eliminatory_mask'].copy()
+
+                    # ── Optional: mask out pixels inside existing PAs ────────
+                    if parameters.get('exclude_pa_pixels') and 'pa_gdf' in st.session_state:
+                        import numpy as np
+                        from rasterio.features import rasterize as _rasterize_pa
+                        _pa_gdf_ex  = st.session_state['pa_gdf']
+                        _ex_classes = parameters.get('exclude_pa_classes', [])
+                        if _ex_classes and 'protection_class' in _pa_gdf_ex.columns:
+                            _pa_sel = _pa_gdf_ex[
+                                _pa_gdf_ex['protection_class'].isin(_ex_classes)
+                            ]
+                        else:
+                            _pa_sel = _pa_gdf_ex
+                        if len(_pa_sel) > 0:
+                            try:
+                                _pa_repr = _pa_sel.to_crs(reference_profile['crs'])
+                                _geoms   = [
+                                    (g, 1) for g in _pa_repr.geometry
+                                    if g is not None and not g.is_empty
+                                ]
+                                if _geoms:
+                                    _pa_mask = _rasterize_pa(
+                                        shapes=_geoms,
+                                        out_shape=(reference_profile['height'],
+                                                   reference_profile['width']),
+                                        transform=reference_profile['transform'],
+                                        fill=0, dtype='uint8'
+                                    ).astype(bool)
+                                    score_out[_pa_mask]     = np.nan
+                                    oecm_mask_out[_pa_mask] = False
+                                    classical_out[_pa_mask] = False
+                                    elim_mask_out[_pa_mask] = False
+                                    logger.info(
+                                        "PA exclusion: masked %d pixels from %d %s",
+                                        int(_pa_mask.sum()), len(_pa_sel),
+                                        str(_ex_classes)
+                                    )
+                            except Exception as _e:
+                                logger.warning("PA exclusion rasterization failed: %s", _e)
+
+                    st.session_state['score_array']        = score_out
+                    st.session_state['oecm_mask']          = oecm_mask_out
+                    st.session_state['classical_pa_mask']  = classical_out
+                    st.session_state['eliminatory_mask']   = elim_mask_out
+                    st.session_state['raster_profile']     = reference_profile
+                    st.session_state['normalised_arrays']  = results.get('normalised_arrays', {})
+                    st.session_state['group_scores']       = results.get('group_scores', {})
+
+                    render_tab_module2(
+                        score_array=score_out,
+                        oecm_mask=oecm_mask_out,
+                        classical_pa_mask=classical_out,
+                        eliminatory_mask=elim_mask_out,
+                        profile=reference_profile,
+                        params=parameters
+                    )
+
+                except Exception as e:
+                    st.error(f"MCE computation failed: {str(e)}")
+                    logger.exception("MCE computation error:")
+
+        else:
+            st.info(
+                "Click **Load & Align Rasters** above to initialise the analysis. "
+                "After that, scores update automatically when you adjust weights."
+            )
