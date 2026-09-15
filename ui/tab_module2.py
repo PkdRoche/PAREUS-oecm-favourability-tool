@@ -42,6 +42,35 @@ def _to_multipolygon(geom):
     return geom
 
 
+def _criterion_weights_df(params: dict) -> pd.DataFrame:
+    """Effective (intra x inter) weight of each criterion, for the contribution
+    chart shown live in the Statistics subtab and reused in the PDF report."""
+    rows = []
+    if params is None:
+        return pd.DataFrame(columns=['Criterion', 'Group', 'Weight', 'Group_Letter'])
+
+    if 'w_condition' in params:
+        rows.append({'Criterion': 'Ecosystem Condition', 'Group': 'A — Ecological',
+                      'Weight': params['w_condition'] * params['W_A'], 'Group_Letter': 'A'})
+    if 'w_regulating_es' in params:
+        rows.append({'Criterion': 'Regulating ES', 'Group': 'A — Ecological',
+                      'Weight': params['w_regulating_es'] * params['W_A'], 'Group_Letter': 'A'})
+    if 'w_pressure' in params:
+        rows.append({'Criterion': 'Low Pressure', 'Group': 'A — Ecological',
+                      'Weight': params['w_pressure'] * params['W_A'], 'Group_Letter': 'A'})
+    if 'w_cultural_es' in params:
+        rows.append({'Criterion': 'Cultural ES', 'Group': 'B — Co-benefits',
+                      'Weight': params['w_cultural_es'] * params['W_B'], 'Group_Letter': 'B'})
+    if 'w_provisioning_es' in params:
+        rows.append({'Criterion': 'Provisioning ES', 'Group': 'C — Production',
+                      'Weight': params['w_provisioning_es'] * params['W_C'], 'Group_Letter': 'C'})
+    if 'w_landuse_compatible' in params:
+        rows.append({'Criterion': 'Compatible Land Use', 'Group': 'C — Production',
+                      'Weight': params['w_landuse_compatible'] * params['W_C'], 'Group_Letter': 'C'})
+
+    return pd.DataFrame(rows)
+
+
 def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                        eliminatory_mask=None, profile=None, params=None):
     """
@@ -484,66 +513,8 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
         st.markdown("#### Per-Criterion Contribution")
 
         try:
-            # Retrieve criterion arrays from session state if available
-            # This requires storing intermediate criterion scores during MCE
-            # For now, display parameter weights instead
-
             if params is not None:
-                # Extract weights
-                weights_data = []
-
-                # Group A criteria
-                if 'w_condition' in params:
-                    weights_data.append({
-                        'Criterion': 'Ecosystem Condition',
-                        'Group': 'A — Ecological',
-                        'Weight': params['w_condition'] * params['W_A'],
-                        'Group_Letter': 'A'
-                    })
-
-                if 'w_regulating_es' in params:
-                    weights_data.append({
-                        'Criterion': 'Regulating ES',
-                        'Group': 'A — Ecological',
-                        'Weight': params['w_regulating_es'] * params['W_A'],
-                        'Group_Letter': 'A'
-                    })
-
-                if 'w_pressure' in params:
-                    weights_data.append({
-                        'Criterion': 'Low Pressure',
-                        'Group': 'A — Ecological',
-                        'Weight': params['w_pressure'] * params['W_A'],
-                        'Group_Letter': 'A'
-                    })
-
-                # Group B criteria
-                if 'w_cultural_es' in params:
-                    weights_data.append({
-                        'Criterion': 'Cultural ES',
-                        'Group': 'B — Co-benefits',
-                        'Weight': params['w_cultural_es'] * params['W_B'],
-                        'Group_Letter': 'B'
-                    })
-
-                # Group C criteria
-                if 'w_provisioning_es' in params:
-                    weights_data.append({
-                        'Criterion': 'Provisioning ES',
-                        'Group': 'C — Production',
-                        'Weight': params['w_provisioning_es'] * params['W_C'],
-                        'Group_Letter': 'C'
-                    })
-
-                if 'w_landuse_compatible' in params:
-                    weights_data.append({
-                        'Criterion': 'Compatible Land Use',
-                        'Group': 'C — Production',
-                        'Weight': params['w_landuse_compatible'] * params['W_C'],
-                        'Group_Letter': 'C'
-                    })
-
-                weights_df = pd.DataFrame(weights_data)
+                weights_df = _criterion_weights_df(params)
 
                 # Create horizontal bar chart
                 color_map = {
@@ -1541,83 +1512,92 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
     with col_exp4:
         if st.button("Generate PDF Report"):
             try:
-                with st.spinner("Generating PDF report..."):
-                    # Create temporary map image from score_array
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_img:
-                        import matplotlib.cm as mcm
-                        _cmap = mcm.get_cmap('RdYlGn')
-                        _norm = mcolors.Normalize(vmin=0.0, vmax=1.0)
-                        _rgba = np.zeros((*score_array.shape, 4), dtype=np.uint8)
-                        _vm = ~np.isnan(score_array)
-                        _rgba[_vm] = (_cmap(_norm(score_array[_vm])) * 255).astype(np.uint8)
-                        fig_map, ax = plt.subplots(figsize=(10, 8))
-                        ax.imshow(_rgba)
-                        ax.axis('off')
-                        plt.savefig(tmp_img.name, bbox_inches='tight', dpi=150)
-                        plt.close()
+                with st.spinner("Generating comprehensive PDF report..."):
+                    # ── Summary statistics table ────────────────────────────
+                    pa_gdf = st.session_state.get('pa_gdf')
+                    wdpa_area_ha_pdf = 0.0
+                    n_pa_sites_pdf = 0
+                    if pa_gdf is not None:
+                        try:
+                            wdpa_area_ha_pdf = float(pa_gdf.geometry.union_all().area) / 10000.0
+                            n_pa_sites_pdf = len(pa_gdf)
+                        except Exception:
+                            pass
 
-                        # Build comprehensive stats table for PDF
-                        pa_gdf = st.session_state.get('pa_gdf')
-                        wdpa_area_ha_pdf = 0.0
-                        n_pa_sites_pdf = 0
-                        if pa_gdf is not None:
-                            try:
-                                wdpa_area_ha_pdf = float(pa_gdf.geometry.union_all().area) / 10000.0
-                                n_pa_sites_pdf = len(pa_gdf)
-                            except Exception:
-                                pass
+                    stats_df = pd.DataFrame([
+                        {'Metric': 'Territory grid area (ha)',
+                         'Value': f"{territory_area_ha:.0f}"},
+                        {'Metric': 'Eligible area — passed Group D (ha)',
+                         'Value': f"{eligible_area_ha:.0f}"},
+                        {'Metric': 'Eliminated — pressure / incompatible LU (ha)',
+                         'Value': f"{n_eliminated * pixel_area_ha:.0f}"},
+                        {'Metric': 'OECM favourable area — MCE Group C ≥ 0.10 (ha)',
+                         'Value': f"{oecm_area_ha:.0f}"},
+                        {'Metric': 'Low use-function — MCE Group C < 0.10 (ha)',
+                         'Value': f"{classical_pa_area_ha:.0f}"},
+                        {'Metric': 'Median favourability score (eligible pixels)',
+                         'Value': f"{median_score:.3f}"},
+                        {'Metric': 'Existing WDPA protected area — union (ha)',
+                         'Value': f"{wdpa_area_ha_pdf:.0f}" if wdpa_area_ha_pdf > 0 else 'Not loaded'},
+                        {'Metric': 'Existing WDPA sites (count)',
+                         'Value': str(n_pa_sites_pdf) if n_pa_sites_pdf > 0 else 'Not loaded'},
+                    ])
 
-                        stats_df = pd.DataFrame([
-                            {'Metric': 'Territory grid area (ha)',
-                             'Value': f"{territory_area_ha:.0f}"},
-                            {'Metric': 'Eligible area — passed Group D (ha)',
-                             'Value': f"{eligible_area_ha:.0f}"},
-                            {'Metric': 'Eliminated — pressure / incompatible LU (ha)',
-                             'Value': f"{n_eliminated * pixel_area_ha:.0f}"},
-                            {'Metric': 'OECM favourable area — MCE Group C ≥ 0.10 (ha)',
-                             'Value': f"{oecm_area_ha:.0f}"},
-                            {'Metric': 'Low use-function — MCE Group C < 0.10 (ha)',
-                             'Value': f"{classical_pa_area_ha:.0f}"},
-                            {'Metric': 'Median favourability score (eligible pixels)',
-                             'Value': f"{median_score:.3f}"},
-                            {'Metric': 'Existing WDPA protected area — union (ha)',
-                             'Value': f"{wdpa_area_ha_pdf:.0f}" if wdpa_area_ha_pdf > 0 else 'Not loaded'},
-                            {'Metric': 'Existing WDPA sites (count)',
-                             'Value': str(n_pa_sites_pdf) if n_pa_sites_pdf > 0 else 'Not loaded'},
-                        ])
+                    # Add timestamp and spec version to params
+                    if params is not None:
+                        params_full = params.copy()
+                        params_full['timestamp'] = datetime.now().isoformat()
+                        params_full['spec_version'] = 'v0.1'
+                    else:
+                        params_full = {
+                            'timestamp': datetime.now().isoformat(),
+                            'spec_version': 'v0.1'
+                        }
 
-                        # Add timestamp and spec version to params
-                        if params is not None:
-                            params_full = params.copy()
-                            params_full['timestamp'] = datetime.now().isoformat()
-                            params_full['spec_version'] = 'v0.1'
-                        else:
-                            params_full = {
-                                'timestamp': datetime.now().isoformat(),
-                                'spec_version': 'v0.1'
-                            }
+                    # ── Pull in every other analysis actually run this session ──
+                    weights_df_pdf = _criterion_weights_df(params) if params is not None else None
+                    sensitivity_stability_pdf = st.session_state.get('sensitivity_stability')
+                    candidate_sites_pdf = st.session_state.get('candidate_sites')
+                    imported_sites_pdf = st.session_state.get('imported_sites_eval')
 
-                        # Generate PDF
-                        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_pdf:
-                            export_module.generate_pdf_report(
-                                map_image_path=tmp_img.name,
-                                stats_df=stats_df,
-                                parameters=params_full,
-                                output_path=tmp_pdf.name
-                            )
+                    scenario_scores_pdf = None
+                    scenario_profile_pdf = None
+                    _sc_cache_pdf = st.session_state.get('_scenario_comparison')
+                    if _sc_cache_pdf is not None and _sc_cache_pdf.get('key') == st.session_state.get('_aligned_key'):
+                        scenario_scores_pdf = _sc_cache_pdf['scores']
+                        scenario_profile_pdf = st.session_state.get('_aligned_profile')
 
-                            # Read PDF for download
-                            with open(tmp_pdf.name, 'rb') as f:
-                                pdf_bytes = f.read()
+                    # Generate PDF
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_pdf:
+                        export_module.generate_pdf_report(
+                            output_path=tmp_pdf.name,
+                            parameters=params_full,
+                            score_array=score_array,
+                            profile=profile,
+                            stats_df=stats_df,
+                            display_threshold=st.session_state.get('export_threshold', 0.5),
+                            oecm_mask=oecm_mask,
+                            pa_gdf=pa_gdf,
+                            weights_df=weights_df_pdf,
+                            sensitivity_stability=sensitivity_stability_pdf,
+                            candidate_sites=candidate_sites_pdf,
+                            imported_sites=imported_sites_pdf,
+                            scenario_scores=scenario_scores_pdf,
+                            scenario_profile=scenario_profile_pdf,
+                        )
 
-                            save_and_download(
-                                label="Download PDF Report",
-                                data=pdf_bytes,
-                                file_name="favourability_report.pdf",
-                                mime="application/pdf"
-                            )
+                        # Read PDF for download
+                        with open(tmp_pdf.name, 'rb') as f:
+                            pdf_bytes = f.read()
 
-                            st.success("PDF report ready for download!")
+                        save_and_download(
+                            label="Download PDF Report",
+                            data=pdf_bytes,
+                            file_name="favourability_report.pdf",
+                            mime="application/pdf"
+                        )
+
+                        st.success("PDF report ready for download!")
 
             except ImportError:
                 st.error("PDF generation requires reportlab. Install with: pip install reportlab")
