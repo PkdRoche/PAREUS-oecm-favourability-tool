@@ -23,6 +23,28 @@ logger = logging.getLogger(__name__)
 # On Streamlit Cloud (Linux) we fall back to st.file_uploader.
 _IS_LOCAL = sys.platform == 'win32'
 
+# Sidebar analysis parameters saved/restored via .ini project files, with
+# their expected type for round-tripping through configparser (which only
+# stores strings). Keys match ui/sidebar.py's returned `parameters` dict —
+# see the `_pending_sidebar_params` restore logic in render_sidebar().
+_PARAM_TYPES = {
+    'threshold_pressure': float,
+    'method': str,
+    'alpha': float,
+    'W_A': float, 'W_B': float, 'W_C': float,
+    'w_condition': float, 'w_regulating_es': float, 'w_pressure': float,
+    'w_provisioning_es': float, 'w_landuse_compatible': float,
+    'percentile_norm': bool,
+    'proximity_bonus': float, 'proximity_decay_km': float,
+    'sensitivity_runs': int, 'sensitivity_concentration': int,
+    'sensitivity_perturb_intra': bool,
+    'mmu_ha': int,
+    'gap_bonus': float,
+    'exclude_pa_pixels': bool,
+    'exclude_pa_classes': list,
+    'show_pa_overlay': bool,
+}
+
 
 def _native_browse(filetypes: list[tuple]) -> str:
     """Open a native Windows file dialog in a subprocess and return the selected path (or '')."""
@@ -43,6 +65,29 @@ def _native_browse(filetypes: list[tuple]) -> str:
         st.error(
             "Could not open the native file browser. "
             "Please paste the file path directly into the text field below."
+        )
+        return ''
+
+
+def _native_browse_folder() -> str:
+    """Open a native Windows folder-picker dialog and return the selected path (or '')."""
+    script = (
+        "import tkinter as tk; from tkinter import filedialog; "
+        "root = tk.Tk(); root.withdraw(); root.wm_attributes('-topmost', True); "
+        "path = filedialog.askdirectory(); "
+        "root.destroy(); print(path)"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, '-c', script],
+            capture_output=True, text=True, timeout=120
+        )
+        return result.stdout.strip()
+    except Exception as e:
+        logger.warning(f"Native folder dialog failed: {e}")
+        st.error(
+            "Could not open the native folder browser. "
+            "Please paste the folder path directly into the text field below."
         )
         return ''
 
@@ -221,6 +266,21 @@ def _save_project_ini(filepath: str) -> None:
         'exclude_marine_pa': str(st.session_state.get('exclude_marine_pa', True))
     }
 
+    # Analysis parameters — all sidebar settings (weights, thresholds,
+    # aggregation method, gap/proximity bonuses, sensitivity & delineation
+    # settings, PA exclusion). See _PARAM_TYPES for the full list.
+    analysis_params = st.session_state.get('parameters', {})
+    if analysis_params:
+        config['parameters'] = {}
+        for key, ptype in _PARAM_TYPES.items():
+            if key not in analysis_params or analysis_params[key] is None:
+                continue
+            value = analysis_params[key]
+            if ptype is list:
+                config['parameters'][key] = ','.join(str(v) for v in value)
+            else:
+                config['parameters'][key] = str(value)
+
     with open(filepath, 'w') as f:
         config.write(f)
     logger.info(f"Project saved to {filepath}")
@@ -245,7 +305,7 @@ def _load_project_ini(filepath: str) -> dict:
 
     result = {
         'nuts_path': None, 'nuts_id': None, 'wdpa_path': None,
-        'raster_paths': {}, 'settings': {}, 'errors': []
+        'raster_paths': {}, 'settings': {}, 'parameters': {}, 'errors': []
     }
 
     # NUTS
@@ -277,6 +337,22 @@ def _load_project_ini(filepath: str) -> dict:
     if config.has_section('settings'):
         for key, value in config.items('settings'):
             result['settings'][key] = value
+
+    # Analysis parameters — sidebar settings (weights, thresholds, method, etc.)
+    if config.has_section('parameters'):
+        for key, ptype in _PARAM_TYPES.items():
+            if not config.has_option('parameters', key):
+                continue
+            raw = config.get('parameters', key)
+            try:
+                if ptype is bool:
+                    result['parameters'][key] = raw.strip().lower() == 'true'
+                elif ptype is list:
+                    result['parameters'][key] = [v for v in raw.split(',') if v]
+                else:
+                    result['parameters'][key] = ptype(raw)
+            except ValueError:
+                result['errors'].append(f"Invalid value for parameter '{key}': {raw!r}")
 
     logger.info(f"Project loaded from {filepath}: {len(result['raster_paths'])} rasters")
     return result
@@ -313,12 +389,69 @@ def render():
     )
 
     # ===================================================================
+    # Output Folder — where analysis exports (reports, GeoTIFF, shapefiles,
+    # CSV, PDF, etc.) are saved in addition to the browser download. Set
+    # first, since the .ini project file below defaults to being saved here.
+    # ===================================================================
+    st.subheader("Output Folder")
+    st.caption(
+        "Optional. When set, every export button across the app (Module 1 "
+        "and Module 2) also saves a copy directly to this folder — no need "
+        "to pick a save location in the browser each time. The project "
+        "(.ini) file below also defaults to being saved here."
+    )
+
+    if _IS_LOCAL:
+        col_out_browse, col_out_clear = st.columns(2)
+        with col_out_browse:
+            if st.button("Browse…", key='output_dir_browse'):
+                chosen = _native_browse_folder()
+                if chosen:
+                    st.session_state['output_dir'] = chosen
+                    st.rerun()
+        with col_out_clear:
+            if st.button("✕ Clear", key='output_dir_clear'):
+                st.session_state['output_dir'] = ''
+                st.rerun()
+
+        # Single source of truth: the text input's own key IS 'output_dir' —
+        # the same key read everywhere else in the app (save_and_download(),
+        # the .ini default path, etc.). The Browse/Clear buttons above just
+        # set this same key before rerunning. Using a *separate* key here
+        # (as an earlier version of this code did) is a classic Streamlit
+        # trap: once a keyed widget exists, its `value=` argument is only
+        # used on first creation — writing to a *different* session_state
+        # key from a button click never reaches an already-initialised
+        # widget, so Browse would appear to work but get silently reverted
+        # by this text input on the very next rerun.
+        output_dir_input = st.text_input(
+            "Output folder path",
+            key='output_dir',
+            help="Or paste a folder path directly.",
+        )
+        if output_dir_input and not (Path(output_dir_input).exists() and Path(output_dir_input).is_dir()):
+            st.caption("⚠️ Folder not found.")
+    else:
+        # Cloud: no local filesystem to save into — browser download only.
+        st.caption(
+            "Not available in this deployment — exports are offered as browser "
+            "downloads only."
+        )
+
+    if st.session_state.get('output_dir'):
+        st.caption(f"📁 Exports will also be saved to `{st.session_state['output_dir']}`")
+
+    st.markdown("---")
+
+    # ===================================================================
     # Project Save / Load
     # ===================================================================
     st.subheader("Project Configuration")
     st.caption(
-        "Save or load layer paths to avoid re-selecting files on each restart. "
-        "The .ini file stores **file paths only** — no data is copied."
+        "Save or load layer paths and analysis settings (weights, thresholds, "
+        "aggregation method, etc.) to avoid reconfiguring everything on each "
+        "restart. The .ini file stores **file paths and parameter values "
+        "only** — no data is copied."
     )
 
     col_load, col_save = st.columns(2)
@@ -382,15 +515,24 @@ def render():
                         project['settings']['exclude_marine_pa'].lower() == 'true'
                     )
 
+                # Analysis parameters (weights, thresholds, aggregation method,
+                # gap/proximity bonuses, sensitivity & delineation settings,
+                # PA exclusion). Picked up once by render_sidebar() on its
+                # next run to pre-seed each widget's session state.
+                if project.get('parameters'):
+                    st.session_state['_pending_sidebar_params'] = project['parameters']
+
                 # Mark this .ini as processed so we don't re-run on every rerender
                 st.session_state['_loaded_ini_sig'] = _ini_sig
 
                 # Report
                 n_loaded = len(project['raster_paths'])
                 wdpa_ok = project['wdpa_path'] is not None
+                n_params = len(project.get('parameters', {}))
                 st.success(
                     f"Project loaded: {n_loaded} raster(s)"
                     f"{', WDPA' if wdpa_ok else ''}"
+                    f"{f', {n_params} analysis parameter(s)' if n_params else ''}"
                 )
                 if project['errors']:
                     for err in project['errors']:
@@ -409,10 +551,12 @@ def render():
                 )
 
     with col_save:
+        _default_ini_dir = st.session_state.get('output_dir') or str(Path.home())
         save_path = st.text_input(
             "Save project as (.ini)",
-            value=str(Path.home() / 'oecm_project.ini'),
-            help="Choose a path to save the current layer configuration."
+            value=str(Path(_default_ini_dir) / 'oecm_project.ini'),
+            help="Choose a path to save the current layer configuration. "
+                 "Defaults to the Output Folder above, when set.",
         )
         if st.button("Save Project"):
             try:

@@ -10,6 +10,8 @@ import yaml
 import tempfile
 import logging
 
+from ui.export_utils import save_and_download
+
 logger = logging.getLogger(__name__)
 
 
@@ -65,7 +67,7 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
     pa_gdf = st.session_state.get('pa_gdf')
 
     if territory_geom is None:
-        st.info("Select your study region in the sidebar (Country → NUTS2 region) first.")
+        st.info("Select your study region in **② Parameters** (Country → NUTS2 region) first.")
         return
 
     if wdpa_file is None:
@@ -371,20 +373,24 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
         # IUCN category breakdown
         st.markdown("#### Coverage by IUCN Category")
         iucn_col_stats = 'IUCN_MAX' if 'IUCN_MAX' in pa_gdf.columns else 'IUCN_CAT'
+        iucn_rows = []  # also reused by "Generate DOCX Report" below — avoids recomputation
         if iucn_col_stats in pa_gdf.columns:
             # Compute total union once — reused for TOTAL row (avoids 3× union_all)
             total_pa_area_ha = pa_gdf.geometry.union_all().area / 10000.0
-            iucn_rows = []
             cats_sorted_stats = sorted(
                 pa_gdf[iucn_col_stats].unique(), key=iucn_category_sort_key
             )
             for cat in cats_sorted_stats:
                 grp = pa_gdf[pa_gdf[iucn_col_stats] == cat]
-                net_area = grp.geometry.union_all().area / 10000.0
+                # NOTE: intentionally NOT named `net_area` — that name is used
+                # above for the territory-wide net protected area metric, and
+                # reusing it here would silently overwrite it for any code
+                # later in this function (e.g. the DOCX report below).
+                cat_area_ha = grp.geometry.union_all().area / 10000.0
                 iucn_rows.append({
                     'IUCN Category': cat,
-                    'Area (ha)': f"{net_area:,.0f}",
-                    '% Territory': f"{net_area / territory_area_ha * 100:.2f}%",
+                    'Area (ha)': f"{cat_area_ha:,.0f}",
+                    '% Territory': f"{cat_area_ha / territory_area_ha * 100:.2f}%",
                     'Sites': len(grp)
                 })
             iucn_rows.append({
@@ -887,93 +893,33 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
                         "for the whole study area and within each IUCN protection category."
                     )
                     try:
-                        import rasterio as _rio
-                        from rasterio.features import rasterize as _rasterize_clc
-
-                        # CLC Level 1 labels (first digit of CLC code)
-                        _CLC_LEVEL1_LABELS = {
-                            1: "Urban",
-                            2: "Agricultural",
-                            3: "Shrublands / Mixed",
-                            4: "Forest",
-                            5: "Water",
-                        }
+                        from modules.module1_protected_areas.zonal_stats import (
+                            clc_composition_by_iucn_category
+                        )
 
                         lu_path = st.session_state['criterion_raster_paths']['landuse']
 
-                        with _rio.open(lu_path) as src:
-                            lu_array = src.read(1).astype(float)
-                            lu_nodata = src.nodata
-                            lu_transform = src.transform
-                            lu_crs = src.crs
-                        if lu_nodata is not None:
-                            lu_array[lu_array == lu_nodata] = np.nan
-
-                        h_lu, w_lu = lu_array.shape
-                        valid_mask_all = ~np.isnan(lu_array)
-                        level1_all = np.full(lu_array.shape, -1, dtype=int)
-                        level1_all[valid_mask_all] = (
-                            lu_array[valid_mask_all].astype(int) // 100
-                        )  # 311 → 3, 112 → 1, etc.
-
-                        def _clc_pct_by_level1(zone_mask):
-                            """Return {level1_code: pct_of_zone} for valid pixels inside zone_mask."""
-                            selected = level1_all[zone_mask & valid_mask_all]
-                            if selected.size == 0:
-                                return {}
-                            vals, counts = np.unique(selected, return_counts=True)
-                            return {
-                                int(v): 100.0 * c / selected.size
-                                for v, c in zip(vals, counts)
+                        # Cached (session_state) so this isn't recomputed every
+                        # rerun of this tab, and so the DOCX report below can
+                        # reuse the exact same result instead of recomputing it.
+                        _clc_key = (lu_path, id(pa_gdf))
+                        _clc_cache = st.session_state.get('_clc_composition_cache')
+                        if _clc_cache is not None and _clc_cache.get('key') == _clc_key:
+                            clc_df = _clc_cache['df']
+                        else:
+                            clc_df = clc_composition_by_iucn_category(lu_path, pa_gdf)
+                            st.session_state['_clc_composition_cache'] = {
+                                'key': _clc_key, 'df': clc_df
                             }
+                        st.session_state['clc_composition_df'] = clc_df
 
-                        # Column 1: whole study area (the raster's full valid extent)
-                        columns_pct = {
-                            'Whole Study Area': _clc_pct_by_level1(
-                                np.ones((h_lu, w_lu), dtype=bool)
-                            )
-                        }
-
-                        # One column per IUCN category, in canonical order
-                        iucn_col_clc = 'IUCN_MAX' if 'IUCN_MAX' in pa_gdf.columns else 'IUCN_CAT'
-                        if iucn_col_clc in pa_gdf.columns:
-                            pa_gdf_lu = (
-                                pa_gdf.to_crs(lu_crs) if pa_gdf.crs != lu_crs else pa_gdf
-                            )
-                            cats_sorted_clc = sorted(
-                                pa_gdf_lu[iucn_col_clc].unique(), key=iucn_category_sort_key
-                            )
-                            for cat in cats_sorted_clc:
-                                grp = pa_gdf_lu[pa_gdf_lu[iucn_col_clc] == cat]
-                                geoms = [
-                                    (g, 1) for g in grp.geometry
-                                    if g is not None and not g.is_empty
-                                ]
-                                if not geoms:
-                                    continue
-                                cat_mask = _rasterize_clc(
-                                    shapes=geoms,
-                                    out_shape=(h_lu, w_lu),
-                                    transform=lu_transform,
-                                    fill=0,
-                                    dtype='uint8'
-                                ).astype(bool)
-                                columns_pct[str(cat)] = _clc_pct_by_level1(cat_mask)
-
-                        # Build wide table: rows = CLC L1 categories, columns = zones
-                        all_l1_codes = sorted({
-                            code for pct_map in columns_pct.values() for code in pct_map
-                        })
-                        clc_rows = []
-                        for l1 in all_l1_codes:
-                            label = _CLC_LEVEL1_LABELS.get(l1, f"Unknown ({l1})")
-                            row = {'Level 1': l1, 'Category': label}
-                            for col_name, pct_map in columns_pct.items():
-                                row[col_name] = f"{pct_map.get(l1, 0.0):.1f}%"
-                            clc_rows.append(row)
-
-                        clc_table = pd.DataFrame(clc_rows)
-                        st.dataframe(clc_table, hide_index=True, width='stretch')
+                        # Format for display: rename columns, add % suffix
+                        clc_display = clc_df.rename(
+                            columns={'level1': 'Level 1', 'category': 'Category'}
+                        ).copy()
+                        for col in clc_display.columns[2:]:
+                            clc_display[col] = clc_display[col].apply(lambda x: f"{x:.1f}%")
+                        st.dataframe(clc_display, hide_index=True, width='stretch')
 
                     except Exception as e:
                         st.caption(f"CLC breakdown unavailable: {e}")
@@ -983,6 +929,95 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
             f"Criterion profiling unavailable: {str(e)}\n\n"
             "This feature requires raster paths to be available in session state."
         )
+
+    st.markdown("---")
+
+    # ===================================================================
+    # Ecosystem Account (SEEA-EA style: extent + condition + services)
+    # ===================================================================
+    st.subheader("Ecosystem Account")
+    st.markdown(
+        "Habitat-level extent, condition and service-capacity table — one row per "
+        "habitat type, giving its **surface area**, mean **ecosystem condition**, "
+        "and mean **regulating / cultural / provisioning service capacity**. "
+        "Mirrors the SEEA Ecosystem Accounting logic (extent + condition + "
+        "services accounts), computed directly from the aligned criterion "
+        "rasters — the same data used in the **⑤ OECM Favourability Analysis**."
+    )
+
+    _aa_eco  = st.session_state.get('_aligned_arrays')
+    _prof_eco = st.session_state.get('_aligned_profile')
+
+    if _aa_eco is None or _prof_eco is None:
+        st.info(
+            "Click **Load & Align Rasters** in the **⑤ OECM Favourability Analysis** "
+            "tab first — the ecosystem account reuses those same aligned rasters."
+        )
+    else:
+        _clc_level_label = st.radio(
+            "CLC classification level",
+            options=[
+                "Level 1 — 5 broad classes",
+                "Level 2 — 15 classes",
+                "Level 3 — 44 classes (full nomenclature)",
+            ],
+            horizontal=True,
+            key='ecosystem_account_clc_level',
+            help="Corine Land Cover hierarchy level used to group habitats in the table "
+                 "below. Level 1 gives a quick overview; Level 3 gives the full "
+                 "nomenclature (e.g. distinguishing broad-leaved from coniferous forest)."
+        )
+        _clc_level = int(_clc_level_label.split(" ")[1])
+
+        try:
+            from modules.module1_protected_areas.representativity import ecosystem_account_table
+
+            _eco_key = (st.session_state.get('_aligned_key'), _clc_level)
+            _eco_cache = st.session_state.get('_ecosystem_account_cache')
+            if _eco_cache is not None and _eco_cache.get('key') == _eco_key:
+                _eco_df = _eco_cache['df']
+            else:
+                _eco_df = ecosystem_account_table(_aa_eco, _prof_eco, clc_level=_clc_level)
+                st.session_state['_ecosystem_account_cache'] = {'key': _eco_key, 'df': _eco_df}
+
+            _eco_disp = _eco_df.rename(columns={
+                'ecosystem_type': 'Habitat',
+                'area_ha': 'Surface (ha)',
+                'pct_area': '% of area',
+                'condition_mean': 'Condition',
+                'regulating_es_mean': 'Regulating ES',
+                'cultural_es_mean': 'Cultural ES',
+                'provisioning_es_mean': 'Provisioning ES',
+            }).copy()
+            for _c in ['Surface (ha)']:
+                _eco_disp[_c] = _eco_disp[_c].apply(lambda x: f"{x:,.0f}")
+            for _c in ['% of area']:
+                _eco_disp[_c] = _eco_disp[_c].apply(lambda x: f"{x:.1f}%")
+            for _c in ['Condition', 'Regulating ES', 'Cultural ES', 'Provisioning ES']:
+                _eco_disp[_c] = _eco_disp[_c].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
+
+            st.dataframe(
+                _eco_disp.style.apply(
+                    lambda row: ['font-weight: bold' if row.name == len(_eco_disp) - 1 else '' for _ in row],
+                    axis=1
+                ),
+                hide_index=True, width='stretch'
+            )
+            st.caption(
+                "Condition and service-capacity columns are the mean of each aligned "
+                "criterion raster within the pixels of that habitat type (all normalised "
+                "[0-1] at source). The last row totals the whole study area."
+            )
+
+            save_and_download(
+                "Download CSV",
+                data=_eco_df.to_csv(index=False),
+                file_name="ecosystem_account.csv",
+                mime="text/csv",
+                key='ecosystem_account_csv_download',
+            )
+        except Exception as _e:
+            st.error(f"Ecosystem account failed: {_e}")
 
     st.markdown("---")
 
@@ -1007,30 +1042,17 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
                     from modules.module1_protected_areas.report_generator import (
                         generate_docx_report
                     )
-                    from modules.module1_protected_areas.coverage_stats import (
-                        coverage_by_class, kmgbf_indicator
-                    )
 
-                    # Re-compute tables needed for the report
-                    _cov_df      = coverage_by_class(pa_gdf, territory_area_ha)
-                    _kmgbf       = kmgbf_indicator(pa_gdf, territory_area_ha)        # I–VI + OECM
-                    _strict_pct  = kmgbf_indicator(pa_gdf, territory_area_ha,
-                                                   classes=['strict_core'])          # I–II only
-                    _net_area    = compute_net_area(pa_gdf, territory_geom)
-
-                    # IUCN category coverage table
-                    iucn_col_r = 'IUCN_MAX' if 'IUCN_MAX' in pa_gdf.columns else 'IUCN_CAT'
-                    _iucn_rows = []
-                    if iucn_col_r in pa_gdf.columns:
-                        for cat, grp in pa_gdf.groupby(iucn_col_r):
-                            net = grp.geometry.union_all().area / 10000.0
-                            _iucn_rows.append({
-                                'IUCN Category': cat,
-                                'Area (ha)': f'{net:,.0f}',
-                                '% Territory': f'{net / territory_area_ha * 100:.2f}%',
-                                'Sites': len(grp),
-                            })
-                    _iucn_df = pd.DataFrame(_iucn_rows) if _iucn_rows else None
+                    # Reuse tables already computed above (Key Indicators /
+                    # Coverage by Protection Class / Coverage by IUCN Category)
+                    # instead of recomputing them — union_all() on the full PA
+                    # layer is the same expensive operation whether it's done
+                    # here or above, so recomputing it was pure duplicate work.
+                    _cov_df     = coverage_df
+                    _kmgbf      = kmgbf_pct
+                    _strict_pct = strict_pct
+                    _net_area   = net_area
+                    _iucn_df    = pd.DataFrame(iucn_rows) if iucn_rows else None
 
                     docx_bytes = generate_docx_report(
                         territory_name=st.session_state.get('parameters', {}).get(
@@ -1048,6 +1070,7 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
                         kmgbf_pct=_kmgbf,
                         net_area_ha=_net_area,
                         strict_pct=_strict_pct,
+                        clc_composition_df=st.session_state.get('clc_composition_df'),
                     )
                     st.session_state['_module1_report_bytes'] = docx_bytes
                     st.success("Report ready — click Download below.")
@@ -1065,7 +1088,7 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
             .get('study_area_name', 'territory')
             .replace(' ', '_')[:30]
         )
-        st.download_button(
+        save_and_download(
             label="Download DOCX",
             data=report_bytes or b'',
             file_name=f"module1_diagnostic_{territory_slug}.docx",
@@ -1080,8 +1103,8 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
 
     with col_exp1:
         if st.button("Export PA Statistics (CSV)"):
-            # Export coverage statistics
-            coverage_df = coverage_by_class(pa_gdf, territory_area_ha)
+            # Reuse the coverage table already computed above ("Coverage by
+            # Protection Class") instead of recomputing union_all() on pa_gdf.
 
             # Create temporary CSV file
             with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv') as tmp:
@@ -1091,7 +1114,7 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
                 with open(tmp.name, 'r') as f:
                     csv_data = f.read()
 
-                st.download_button(
+                save_and_download(
                     label="Download CSV",
                     data=csv_data,
                     file_name="pa_coverage_statistics.csv",
@@ -1129,7 +1152,7 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
 
                     st.success(
                         "Weight suggestions validated and applied! "
-                        "Go to sidebar Section 7 to apply them to Module 2."
+                        "Go to **② Parameters** Section 7 to apply them to Module 2."
                     )
 
                 except ValueError as e:

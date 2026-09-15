@@ -534,6 +534,28 @@ def align_rasters(
 
             logger.info(f"  dtype={src_array.dtype}, resampling={resampling_method.name}")
 
+            # Normalise the source array's NoData representation to a single
+            # value and pass it explicitly as src_nodata. `source` here is a
+            # plain numpy array (not an open rasterio dataset), so reproject()
+            # has no file handle to read nodata metadata from — without this,
+            # it treats every source pixel as valid data, and bilinear
+            # resampling can blend a NoData sentinel (or an already-NaN pixel
+            # from upstream validation) into neighbouring valid pixels,
+            # producing spurious values — including negative scores for
+            # continuous [0,1] criteria — near any NoData edge.
+            if is_categorical:
+                src_nodata = src_profile.get('nodata')
+                if src_nodata is None:
+                    src_nodata = 0
+            else:
+                src_array = src_array.astype(np.float32, copy=True)
+                _declared_nodata = src_profile.get('nodata')
+                if _declared_nodata is not None and not (
+                    isinstance(_declared_nodata, float) and np.isnan(_declared_nodata)
+                ):
+                    src_array[src_array == _declared_nodata] = np.nan
+                src_nodata = np.nan
+
             # Use float32 (not float64) for continuous layers — halves memory, sufficient precision.
             dst_dtype = src_array.dtype if is_categorical else np.float32
             dst_nodata = np.nan if not is_categorical else 0
@@ -552,8 +574,19 @@ def align_rasters(
                 dst_transform=ref_profile['transform'],
                 dst_crs=ref_profile['crs'],
                 resampling=resampling_method,
+                src_nodata=src_nodata,
                 dst_nodata=dst_nodata
             )
+
+            # Defensive clip for the four [0,1]-bounded criteria: bilinear
+            # resampling of correctly-declared NoData should no longer
+            # overshoot the source range, but this guards against any
+            # residual floating-point overshoot at sharp edges without
+            # masking genuinely out-of-range upstream data on unbounded
+            # layers (anthropogenic_pressure) or the categorical landuse codes.
+            if name in ('ecosystem_condition', 'regulating_es', 'cultural_es', 'provisioning_es'):
+                _valid = ~np.isnan(dst_array)
+                dst_array[_valid] = np.clip(dst_array[_valid], 0.0, 1.0)
 
             # Apply geometry mask directly via numpy — no MemoryFile needed
             if outside_mask is not None:

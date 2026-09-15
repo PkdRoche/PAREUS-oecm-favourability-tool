@@ -16,6 +16,8 @@ import json
 from datetime import datetime
 import plotly.graph_objects as go
 
+from ui.export_utils import save_and_download
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,7 +60,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
     profile : dict
         Rasterio profile (CRS, transform, dimensions).
     params : dict, optional
-        Full parameter dictionary from sidebar for reproducibility logging.
+        Full parameter dictionary from the Parameters tab for reproducibility logging.
     """
     # ===================================================================
     # Row 1: Summary metric cards
@@ -130,7 +132,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
         st.caption(
             f"Group D eliminated {n_eliminated:,} pixels ({elim_pct:.1f}% of grid) — "
             "high anthropogenic pressure or incompatible land use. "
-            "Adjust the pressure threshold in the sidebar to change this."
+            "Adjust the pressure threshold in **② Parameters** to change this."
         )
 
     st.markdown("---")
@@ -138,8 +140,9 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
     # ===================================================================
     # Sub-tabs: Map and Statistics
     # ===================================================================
-    subtab1, subtab2, subtab3, subtab4 = st.tabs([
-        "Map", "Statistics", "Sensitivity Analysis", "Candidate Sites"
+    subtab1, subtab2, subtab3, subtab4, subtab5, subtab6 = st.tabs([
+        "Map", "Statistics", "Sensitivity Analysis", "Candidate Sites",
+        "Import & Evaluate Sites", "Scenario Comparison"
     ])
 
     with subtab1:
@@ -171,7 +174,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
             )
 
         with ctrl_col3:
-            # PA overlay toggle — inline so it's discoverable without hunting the sidebar
+            # PA overlay toggle — inline so it's discoverable without hunting through Parameters
             _pa_available = st.session_state.get('pa_gdf') is not None
             show_pa_ov = st.checkbox(
                 "Show PA network on map",
@@ -186,13 +189,13 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                 _excl_cls = (params or {}).get('exclude_pa_classes', [])
                 st.caption(f"PA exclusion ON — {', '.join(_excl_cls) or 'all classes'}")
             else:
-                st.caption("PA exclusion OFF (sidebar › 6e to change)")
+                st.caption("PA exclusion OFF (② Parameters › 6e to change)")
 
         # Create folium map with raster overlay
         if n_valid == 0:
             st.warning(
                 "All pixels were eliminated by Group D criteria (pressure threshold or "
-                "incompatible land use). Increase the pressure threshold in the sidebar "
+                "incompatible land use). Increase the pressure threshold in **② Parameters** "
                 "or verify your input layers cover the study area."
             )
 
@@ -470,7 +473,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
         else:
             st.warning(
                 "No eligible pixels found — all pixels were eliminated by Group D criteria. "
-                "Increase the pressure threshold in the sidebar or verify input layers."
+                "Increase the pressure threshold in **② Parameters** or verify input layers."
             )
 
         st.markdown("---")
@@ -640,7 +643,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
         eliminatory_mask  = st.session_state.get('eliminatory_mask')
 
         if not group_scores_sens or eliminatory_mask is None:
-            st.info("Run the MCE analysis first (tab ④) to enable sensitivity analysis.")
+            st.info("Run the MCE analysis first (tab ⑤) to enable sensitivity analysis.")
         else:
             # ── Correlation heatmap ─────────────────────────────────────
             st.markdown("#### Criterion Inter-Correlation")
@@ -870,7 +873,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
             )
             _mmu = params.get('mmu_ha', 100) if params else 100
             st.caption(
-                f"MMU = {_mmu} ha (adjust in sidebar → 6d). "
+                f"MMU = {_mmu} ha (adjust in ② Parameters → 6d). "
                 "Patches smaller than this area are discarded."
             )
 
@@ -965,24 +968,419 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                 except Exception as _e:
                     st.warning(f"Site map unavailable: {_e}")
 
-                # ── GeoPackage download ──────────────────────────────────
+                # ── Shapefile (ZIP) download ──────────────────────────────
                 st.markdown("#### Download Candidate Sites")
                 try:
                     import tempfile, zipfile
                     from pathlib import Path as _Path
                     with tempfile.TemporaryDirectory() as _tmp:
-                        _gpkg = _Path(_tmp) / "candidate_oecm_sites.gpkg"
-                        _sites.to_file(str(_gpkg), driver='GPKG')
-                        with open(_gpkg, 'rb') as _f:
-                            _gpkg_bytes = _f.read()
-                    st.download_button(
-                        "Download GeoPackage",
-                        data=_gpkg_bytes,
-                        file_name="candidate_oecm_sites.gpkg",
-                        mime="application/geopackage+sqlite3",
+                        _shp = _Path(_tmp) / "candidate_oecm_sites.shp"
+                        _sites.to_file(str(_shp), driver='ESRI Shapefile')
+
+                        _zip_path = _Path(_tmp) / "candidate_oecm_sites.zip"
+                        with zipfile.ZipFile(_zip_path, 'w') as _zf:
+                            for _ext in ('.shp', '.shx', '.dbf', '.prj', '.cpg'):
+                                _component = _shp.with_suffix(_ext)
+                                if _component.exists():
+                                    _zf.write(_component, _component.name)
+
+                        with open(_zip_path, 'rb') as _f:
+                            _zip_bytes = _f.read()
+
+                    save_and_download(
+                        "Download Shapefile (ZIP)",
+                        data=_zip_bytes,
+                        file_name="candidate_oecm_sites.zip",
+                        mime="application/zip",
+                        key='candidate_sites_shp_download',
                     )
                 except Exception as _e:
-                    st.caption(f"GeoPackage export unavailable: {_e}")
+                    st.caption(f"Shapefile export unavailable: {_e}")
+
+    # =================================================================
+    # SUBTAB 5: Import & Evaluate Sites
+    # =================================================================
+    with subtab5:
+        st.subheader("Import & Evaluate Candidate Sites")
+        st.markdown(
+            "Upload externally-proposed candidate site polygons and evaluate "
+            "them against the same MCE favourability score used elsewhere in "
+            "Module 2 — current weights, aggregation method and eliminatory "
+            "thresholds. Same attributes and ranking formula as the "
+            "auto-delineated **Candidate Sites** tab, so results are directly "
+            "comparable."
+        )
+
+        _score_ie = st.session_state.get('score_array')
+        _prof_ie  = st.session_state.get('raster_profile')
+
+        if _score_ie is None or _prof_ie is None:
+            st.info("Run the MCE analysis first (Load & Align Rasters above) to enable site evaluation.")
+        else:
+            import geopandas as gpd
+
+            upload_mode = st.radio(
+                "Upload format",
+                ["ZIP archive", "Individual Shapefile files"],
+                horizontal=True,
+                key='import_sites_mode',
+                help="ZIP: a single .zip containing the .shp and its sidecar files "
+                     "(.shx, .dbf, .prj, .cpg). Individual files: select the .shp "
+                     "plus all its sidecar files together in one upload dialog."
+            )
+
+            _imported_gdf = None
+            try:
+                if upload_mode == "ZIP archive":
+                    zip_file = st.file_uploader(
+                        "Candidate sites (.zip)",
+                        type=['zip'],
+                        key='import_sites_zip'
+                    )
+                    if zip_file is not None:
+                        import zipfile, tempfile, os
+                        _tmp_dir = tempfile.mkdtemp()
+                        _zip_path = Path(_tmp_dir) / zip_file.name
+                        _zip_path.write_bytes(zip_file.getvalue())
+                        with zipfile.ZipFile(_zip_path, 'r') as _zf:
+                            _zf.extractall(_tmp_dir)
+                        _shp_matches = [f for f in os.listdir(_tmp_dir) if f.lower().endswith('.shp')]
+                        if not _shp_matches:
+                            st.error("No .shp file found inside the ZIP archive.")
+                        else:
+                            _imported_gdf = gpd.read_file(str(Path(_tmp_dir) / _shp_matches[0]))
+                else:
+                    shp_files = st.file_uploader(
+                        "Candidate sites — select the .shp and all sidecar files together",
+                        type=['shp', 'shx', 'dbf', 'prj', 'cpg'],
+                        accept_multiple_files=True,
+                        key='import_sites_multi'
+                    )
+                    if shp_files:
+                        import tempfile
+                        _tmp_dir = tempfile.mkdtemp()
+                        _shp_name = None
+                        for _f in shp_files:
+                            (Path(_tmp_dir) / _f.name).write_bytes(_f.getvalue())
+                            if _f.name.lower().endswith('.shp'):
+                                _shp_name = _f.name
+                        if _shp_name is None:
+                            st.error("No .shp file found among the uploaded files.")
+                        else:
+                            _imported_gdf = gpd.read_file(str(Path(_tmp_dir) / _shp_name))
+            except Exception as _e:
+                st.error(f"Failed to load candidate sites: {_e}")
+
+            if _imported_gdf is not None and len(_imported_gdf) > 0:
+                st.success(f"Loaded {len(_imported_gdf)} candidate site polygon(s).")
+
+                _text_cols = [
+                    c for c in _imported_gdf.columns
+                    if c != 'geometry' and _imported_gdf[c].dtype == object
+                ]
+                _name_col_choice = st.selectbox(
+                    "Site name/ID column (optional)",
+                    options=["(none — auto-number)"] + _text_cols,
+                    key='import_sites_name_col'
+                )
+                _name_col = None if _name_col_choice == "(none — auto-number)" else _name_col_choice
+
+                if st.button("Evaluate Imported Sites", type="primary", key='evaluate_imported_btn'):
+                    with st.spinner("Evaluating sites against the MCE favourability score…"):
+                        try:
+                            from modules.module2_favourability.patch_delineation import (
+                                evaluate_external_sites
+                            )
+                            _pa_gdf_ie    = st.session_state.get('pa_gdf')
+                            _gap_lyrs_ie  = st.session_state.get('gap_layers', {})
+                            _strict_gp_ie = _gap_lyrs_ie.get('strict_gaps') if _gap_lyrs_ie else None
+                            _oecm_mask_ie = st.session_state.get('oecm_mask')
+
+                            _eval_result = evaluate_external_sites(
+                                sites_gdf=_imported_gdf,
+                                score_array=_score_ie,
+                                profile=_prof_ie,
+                                oecm_mask=_oecm_mask_ie,
+                                pa_gdf=_pa_gdf_ie,
+                                strict_gaps_gdf=_strict_gp_ie,
+                                name_col=_name_col,
+                            )
+                            st.session_state['imported_sites_eval'] = _eval_result
+                            st.success(f"Evaluated {len(_eval_result)} site(s).")
+                        except Exception as _e:
+                            st.error(f"Site evaluation failed: {_e}")
+
+            _eval = st.session_state.get('imported_sites_eval')
+            if _eval is not None and len(_eval) > 0:
+                # ── Results table ────────────────────────────────────────
+                st.markdown("#### Evaluation Results")
+                _disp_eval = _eval[[
+                    'site_name', 'area_ha', 'mean_score', 'pct_eliminated',
+                    'pct_oecm_favourable', 'compactness', 'dist_to_pa_km',
+                    'gap_overlap_pct', 'rank_score'
+                ]].copy()
+                _disp_eval.columns = [
+                    'Site', 'Area (ha)', 'Mean Score', '% Eliminated',
+                    '% OECM-favourable', 'Compactness', 'Dist to PA (km)',
+                    'Gap Overlap (%)', 'Rank Score'
+                ]
+                st.dataframe(
+                    _disp_eval.style.background_gradient(subset=['Rank Score'], cmap='YlGn'),
+                    hide_index=True, width='stretch'
+                )
+                st.caption(
+                    "Rank Score uses the same formula as auto-delineated Candidate "
+                    "Sites (50% mean score + 20% gap overlap + 20% log-area + 10% PA "
+                    "proximity), for direct comparability. % Eliminated = share of the "
+                    "site excluded by Group D hard constraints (high pressure or "
+                    "incompatible land use) — a site with a high % here is a poor fit "
+                    "regardless of its mean score on the remaining area."
+                )
+
+                # ── Map ───────────────────────────────────────────────────
+                st.markdown("#### Site Map")
+                try:
+                    import matplotlib.cm as _mcm_ie
+                    import matplotlib.colors as _mcolors_ie
+
+                    _eval_4326 = _eval.to_crs('EPSG:4326')
+                    _centroid_ie = _eval_4326.geometry.union_all().centroid
+                    _m_eval = folium.Map(
+                        location=[_centroid_ie.y, _centroid_ie.x], zoom_start=9, tiles=None
+                    )
+                    folium.TileLayer(
+                        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+                        attr='Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS user community',
+                        name='Basemap',
+                    ).add_to(_m_eval)
+
+                    _cmap_ie = _mcm_ie.get_cmap('RdYlGn')
+
+                    def _score_colour(v):
+                        if v is None or (isinstance(v, float) and np.isnan(v)):
+                            return '#999999'
+                        return _mcolors_ie.to_hex(_cmap_ie(float(v)))
+
+                    folium.GeoJson(
+                        _eval_4326,
+                        name='Imported Sites',
+                        style_function=lambda f: {
+                            'fillColor': _score_colour(f['properties'].get('mean_score')),
+                            'color': '#333333', 'weight': 1.5, 'fillOpacity': 0.55
+                        },
+                        tooltip=folium.GeoJsonTooltip(
+                            fields=['site_name', 'area_ha', 'mean_score',
+                                    'pct_eliminated', 'rank_score'],
+                            aliases=['Site', 'Area (ha)', 'Mean Score',
+                                     '% Eliminated', 'Rank Score']
+                        )
+                    ).add_to(_m_eval)
+                    folium.LayerControl().add_to(_m_eval)
+                    st_folium(_m_eval, width="100%", height=480)
+                except Exception as _e:
+                    st.warning(f"Site map unavailable: {_e}")
+
+                # ── Export ────────────────────────────────────────────────
+                st.markdown("#### Download Evaluation")
+                try:
+                    import tempfile, zipfile
+                    from pathlib import Path as _Path
+
+                    with tempfile.TemporaryDirectory() as _tmp:
+                        _shp_e = _Path(_tmp) / "evaluated_candidate_sites.shp"
+                        _eval.to_file(str(_shp_e), driver='ESRI Shapefile')
+
+                        _zip_path_e = _Path(_tmp) / "evaluated_candidate_sites.zip"
+                        with zipfile.ZipFile(_zip_path_e, 'w') as _zf:
+                            for _ext in ('.shp', '.shx', '.dbf', '.prj', '.cpg'):
+                                _component = _shp_e.with_suffix(_ext)
+                                if _component.exists():
+                                    _zf.write(_component, _component.name)
+
+                        with open(_zip_path_e, 'rb') as _f:
+                            _zip_bytes_e = _f.read()
+
+                    save_and_download(
+                        "Download Shapefile (ZIP)",
+                        data=_zip_bytes_e,
+                        file_name="evaluated_candidate_sites.zip",
+                        mime="application/zip",
+                        key='evaluated_sites_shp_download',
+                    )
+                    save_and_download(
+                        "Download CSV",
+                        data=_disp_eval.to_csv(index=False),
+                        file_name="evaluated_candidate_sites.csv",
+                        mime="text/csv",
+                        key='evaluated_sites_csv_download',
+                    )
+                except Exception as _e:
+                    st.caption(f"Export unavailable: {_e}")
+
+    # =================================================================
+    # SUBTAB 6: Scenario Comparison
+    # =================================================================
+    with subtab6:
+        st.subheader("Scenario Comparison")
+        st.markdown(
+            "Runs the favourability analysis under three preset trade-offs between "
+            "ecological integrity, co-benefits and production function, holding every "
+            "other setting (aggregation method, thresholds, intra-group weights) fixed "
+            "at the current Parameters tab values. Designed as a quick \"virtual laboratory\" "
+            "for a stakeholder workshop: compare how much the favourable area shifts "
+            "under a biodiversity-first vs. a services-first reading of the same data, "
+            "and where the two agree regardless."
+        )
+
+        _aa_sc   = st.session_state.get('_aligned_arrays')
+        _prof_sc = st.session_state.get('_aligned_profile')
+
+        if _aa_sc is None or _prof_sc is None:
+            st.info("Click **Load & Align Rasters** above to enable scenario comparison.")
+        else:
+            from modules.module2_favourability.mce_engine import SCENARIO_PRESETS
+
+            _preset_rows = [
+                {'Scenario': name, 'W_A': w['W_A'], 'W_B': w['W_B'], 'W_C': w['W_C']}
+                for name, w in SCENARIO_PRESETS.items()
+            ]
+            st.dataframe(pd.DataFrame(_preset_rows), hide_index=True, width='stretch')
+            st.caption(
+                "Gap and PA-proximity bonuses are excluded from this comparison (set to 0) "
+                "so that differences between scenarios reflect the weighting trade-off alone."
+            )
+
+            if st.button("Run Scenario Comparison", type="primary", key='run_scenario_comparison_btn'):
+                with st.spinner("Computing favourability under each scenario…"):
+                    try:
+                        from modules.module2_favourability import mce_engine as _mce
+
+                        _results_sc = {}
+                        for _name, _w in SCENARIO_PRESETS.items():
+                            _weights_sc = {
+                                'inter_group_weights': {
+                                    'W_A': _w['W_A'], 'W_B': _w['W_B'], 'W_C': _w['W_C']
+                                },
+                                'group_a_weights': {
+                                    'ecosystem_condition': params['w_condition'],
+                                    'regulating_es': params['w_regulating_es'],
+                                    'low_pressure': params['w_pressure'],
+                                },
+                                'group_b_weights': {'cultural_es': params['w_cultural_es']},
+                                'group_c_weights': {
+                                    'provisioning_es': params['w_provisioning_es'],
+                                    'compatible_landuse': params['w_landuse_compatible'],
+                                },
+                            }
+                            _res = _mce.compute_favourability(
+                                ecosystem_condition=_aa_sc['ecosystem_condition'],
+                                regulating_es=_aa_sc['regulating_es'],
+                                cultural_es=_aa_sc['cultural_es'],
+                                provisioning_es=_aa_sc['provisioning_es'],
+                                anthropogenic_pressure=_aa_sc['anthropogenic_pressure'],
+                                landuse=_aa_sc['landuse'],
+                                weights=_weights_sc,
+                                method=params['method'],
+                                alpha=params['alpha'],
+                                threshold_pressure=params.get('threshold_pressure', 150.0),
+                                percentile_norm=params.get('percentile_norm', False),
+                            )
+                            _results_sc[_name] = _res['score']
+
+                        st.session_state['_scenario_comparison'] = {
+                            'key': st.session_state.get('_aligned_key'),
+                            'scores': _results_sc,
+                        }
+                        st.success(f"Computed {len(_results_sc)} scenarios.")
+                    except Exception as _e:
+                        st.error(f"Scenario comparison failed: {_e}")
+
+            _sc_cache = st.session_state.get('_scenario_comparison')
+            if _sc_cache is not None and _sc_cache.get('key') == st.session_state.get('_aligned_key'):
+                _scores = _sc_cache['scores']
+                _names = list(_scores.keys())
+
+                # ── Summary statistics per scenario ─────────────────────
+                st.markdown("#### Summary by Scenario")
+                _pixel_area_ha_sc = abs(_prof_sc['transform'][0] * _prof_sc['transform'][4]) / 10_000.0
+                _summary_rows = []
+                for _n in _names:
+                    _s = _scores[_n]
+                    _valid = _s[~np.isnan(_s)]
+                    _summary_rows.append({
+                        'Scenario': _n,
+                        'Eligible area (ha)': round(len(_valid) * _pixel_area_ha_sc, 0),
+                        'Mean score': round(float(np.mean(_valid)), 3) if len(_valid) else None,
+                        'Area score >=0.5 (ha)': round(int((_valid >= 0.5).sum()) * _pixel_area_ha_sc, 0),
+                    })
+                st.dataframe(pd.DataFrame(_summary_rows), hide_index=True, width='stretch')
+
+                # ── Agreement map: how many scenarios classify each pixel as favourable ──
+                st.markdown("#### Scenario Agreement Map")
+                st.caption(
+                    "Number of scenarios (0-3) for which a pixel scores >= 0.5 — pixels "
+                    "favoured under every trade-off (3) are the most defensible candidates "
+                    "to present at a stakeholder workshop; pixels favoured under only one "
+                    "scenario show where the choice of priorities actually matters."
+                )
+                try:
+                    agreement = np.zeros_like(next(iter(_scores.values())), dtype=np.int8)
+                    any_valid = np.zeros_like(agreement, dtype=bool)
+                    for _n in _names:
+                        _s = _scores[_n]
+                        _valid_mask = ~np.isnan(_s)
+                        any_valid |= _valid_mask
+                        agreement += ((_s >= 0.5) & _valid_mask).astype(np.int8)
+                    agreement_f = agreement.astype(np.float32)
+                    agreement_f[~any_valid] = np.nan
+
+                    from rasterio.warp import reproject, calculate_default_transform, Resampling as _Resampling_sc
+                    from rasterio.transform import array_bounds as _array_bounds_sc
+                    import matplotlib.cm as _mcm_sc
+                    import matplotlib.colors as _mcolors_sc
+
+                    src_crs_sc = _prof_sc['crs']
+                    transform_4326_sc, w4326_sc, h4326_sc = calculate_default_transform(
+                        src_crs_sc, 'EPSG:4326', _prof_sc['width'], _prof_sc['height'],
+                        *_array_bounds_sc(_prof_sc['height'], _prof_sc['width'], _prof_sc['transform'])
+                    )
+                    agreement_4326 = np.full((h4326_sc, w4326_sc), np.nan, dtype=np.float32)
+                    reproject(
+                        source=agreement_f, destination=agreement_4326,
+                        src_transform=_prof_sc['transform'], src_crs=src_crs_sc,
+                        dst_transform=transform_4326_sc, dst_crs='EPSG:4326',
+                        resampling=_Resampling_sc.nearest, src_nodata=np.nan, dst_nodata=np.nan,
+                    )
+                    west_sc, south_sc, east_sc, north_sc = _array_bounds_sc(h4326_sc, w4326_sc, transform_4326_sc)
+
+                    _cmap_sc = _mcm_sc.get_cmap('YlGn')
+                    _norm_sc = _mcolors_sc.Normalize(vmin=0, vmax=3)
+                    _rgba_sc = np.zeros((*agreement_4326.shape, 4), dtype=np.uint8)
+                    _valid_2d = ~np.isnan(agreement_4326)
+                    _rgba_sc[_valid_2d] = (_cmap_sc(_norm_sc(agreement_4326[_valid_2d])) * 255).astype(np.uint8)
+                    _img_sc = Image.fromarray(_rgba_sc, mode='RGBA')
+                    _buf_sc = io.BytesIO()
+                    _img_sc.save(_buf_sc, format='PNG')
+                    _b64_sc = base64.b64encode(_buf_sc.getvalue()).decode()
+
+                    _m_sc = folium.Map(
+                        location=[(south_sc + north_sc) / 2, (west_sc + east_sc) / 2],
+                        zoom_start=8, tiles=None,
+                    )
+                    folium.TileLayer(
+                        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+                        attr='Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS user community',
+                        name='Basemap',
+                    ).add_to(_m_sc)
+                    folium.raster_layers.ImageOverlay(
+                        image=f"data:image/png;base64,{_b64_sc}",
+                        bounds=[[south_sc, west_sc], [north_sc, east_sc]],
+                        opacity=0.75, name='Scenario agreement',
+                    ).add_to(_m_sc)
+                    folium.LayerControl().add_to(_m_sc)
+                    st_folium(_m_sc, width="100%", height=480)
+                except Exception as _e:
+                    st.warning(f"Agreement map unavailable: {_e}")
 
     st.markdown("---")
 
@@ -1032,7 +1430,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                     except Exception:
                         pass
 
-                st.download_button(
+                save_and_download(
                     label="Download GeoTIFF",
                     data=geotiff_bytes,
                     file_name="favourability_scores.tif",
@@ -1072,7 +1470,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                         with open(zip_path, 'rb') as f:
                             zip_bytes = f.read()
 
-                        st.download_button(
+                        save_and_download(
                             label="Download Shapefile (ZIP)",
                             data=zip_bytes,
                             file_name="favourable_zones.zip",
@@ -1128,7 +1526,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                         with open(tmp.name, 'r') as f:
                             csv_data = f.read()
 
-                        st.download_button(
+                        save_and_download(
                             label="Download CSV",
                             data=csv_data,
                             file_name="favourability_statistics.csv",
@@ -1212,7 +1610,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                             with open(tmp_pdf.name, 'rb') as f:
                                 pdf_bytes = f.read()
 
-                            st.download_button(
+                            save_and_download(
                                 label="Download PDF Report",
                                 data=pdf_bytes,
                                 file_name="favourability_report.pdf",
@@ -1255,7 +1653,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
 
             json_str = json.dumps(params_full, indent=2, default=_json_safe)
             st.json(json.loads(json_str))
-            st.download_button(
+            save_and_download(
                 label="Download Parameters (JSON)",
                 data=json_str,
                 file_name="mce_parameters.json",

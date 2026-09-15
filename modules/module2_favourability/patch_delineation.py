@@ -364,3 +364,196 @@ def delineate_patches(
         f"score={gdf.iloc[0]['mean_score']:.3f}"
     )
     return gdf
+
+
+def evaluate_external_sites(
+    sites_gdf: gpd.GeoDataFrame,
+    score_array: np.ndarray,
+    profile: dict,
+    oecm_mask: Optional[np.ndarray] = None,
+    pa_gdf: Optional[gpd.GeoDataFrame] = None,
+    strict_gaps_gdf: Optional[gpd.GeoDataFrame] = None,
+    name_col: Optional[str] = None,
+) -> gpd.GeoDataFrame:
+    """
+    Evaluate externally-imported candidate site polygons against the
+    already-computed MCE favourability score.
+
+    Applies the same methodology and attributes as delineate_patches() —
+    including the identical rank_score formula, for direct comparability —
+    but to user-supplied geometries instead of raster-threshold-derived
+    patches. This is how an analyst checks the relevance of a proposed
+    OECM site against the exact same MCE criteria (weights, aggregation,
+    eliminatory thresholds) used everywhere else in Module 2.
+
+    Parameters
+    ----------
+    sites_gdf : GeoDataFrame
+        Imported candidate site polygons, any CRS (reprojected to the score
+        raster's CRS internally).
+    score_array : np.ndarray
+        MCE favourability score from compute_favourability() (NaN = pixel
+        eliminated by Group D — high pressure or incompatible land use).
+    profile : dict
+        Rasterio profile matching score_array (transform, crs, width, height).
+    oecm_mask : np.ndarray, optional
+        Boolean mask from compute_favourability() — True where Group C score
+        clears the OECM-favourable threshold. Used to report what fraction
+        of each site is OECM-favourable vs. better suited to a classical PA.
+    pa_gdf : GeoDataFrame, optional
+        WDPA protected area polygons — distance-to-PA attribute.
+    strict_gaps_gdf : GeoDataFrame, optional
+        Strict gap layer from Module 1 — gap overlap attribute.
+    name_col : str, optional
+        Column in sites_gdf to use as the site label (e.g. a name/ID field
+        from the imported file). Falls back to "Site 1", "Site 2", ... if
+        not given or not present.
+
+    Returns
+    -------
+    GeoDataFrame
+        One row per input site (original row order preserved as `site_id`),
+        columns: site_id, site_name, area_ha, mean_score, max_score,
+        min_score, pct_eliminated, pct_oecm_favourable, compactness,
+        dist_to_pa_km, gap_overlap_pct, rank_score, geometry (score CRS).
+        A site with no overlap with the aligned raster grid gets NaN score
+        columns rather than being dropped, so it still shows up as a
+        "no data / outside study area" result.
+    """
+    from rasterio.features import rasterize as _rasterize
+
+    transform = profile['transform']
+    crs       = profile['crs']
+    h, w      = profile['height'], profile['width']
+
+    if sites_gdf.crs is not None and str(sites_gdf.crs) != str(crs):
+        sites_gdf = sites_gdf.to_crs(crs)
+    elif sites_gdf.crs is None:
+        logger.warning(
+            "Imported sites have no CRS — assuming it already matches the "
+            "score raster's CRS (%s). Verify this is correct.", crs
+        )
+
+    pa_union = None
+    if pa_gdf is not None and len(pa_gdf) > 0:
+        try:
+            pa_union = pa_gdf.geometry.union_all()
+        except Exception as e:
+            logger.warning(f"Could not compute PA union for proximity: {e}")
+
+    gap_union = None
+    if strict_gaps_gdf is not None and len(strict_gaps_gdf) > 0:
+        try:
+            gap_union = strict_gaps_gdf.geometry.union_all()
+        except Exception as e:
+            logger.warning(f"Could not compute gap union: {e}")
+
+    pixel_area_ha = abs(transform[0] * transform[4]) / 10_000.0
+
+    records = []
+    for i, row in sites_gdf.reset_index(drop=True).iterrows():
+        geom = row.geometry
+        site_name = (
+            str(row[name_col]) if name_col and name_col in sites_gdf.columns
+            else f"Site {i + 1}"
+        )
+
+        if geom is None or geom.is_empty:
+            records.append({
+                'site_id': i + 1, 'site_name': site_name, 'area_ha': None,
+                'mean_score': np.nan, 'max_score': np.nan, 'min_score': np.nan,
+                'pct_eliminated': np.nan, 'pct_oecm_favourable': np.nan,
+                'compactness': np.nan, 'dist_to_pa_km': None,
+                'gap_overlap_pct': np.nan, 'geometry': geom,
+            })
+            continue
+
+        site_mask = _rasterize(
+            shapes=[(geom, 1)], out_shape=(h, w), transform=transform,
+            fill=0, dtype='uint8'
+        ).astype(bool)
+        n_overlap = int(site_mask.sum())
+
+        if n_overlap == 0:
+            logger.warning(
+                "Site '%s' has no overlap with the aligned raster grid — "
+                "likely outside the study area.", site_name
+            )
+            pixel_scores = np.array([])
+        else:
+            pixel_scores = score_array[site_mask]
+
+        valid_scores = pixel_scores[~np.isnan(pixel_scores)] if n_overlap else pixel_scores
+
+        if n_overlap > 0:
+            pct_eliminated = 100.0 * (1.0 - len(valid_scores) / n_overlap)
+        else:
+            pct_eliminated = np.nan
+
+        if len(valid_scores) > 0:
+            mean_sc, max_sc, min_sc = (
+                float(np.mean(valid_scores)), float(np.max(valid_scores)),
+                float(np.min(valid_scores)),
+            )
+        else:
+            mean_sc = max_sc = min_sc = np.nan
+
+        if oecm_mask is not None and n_overlap > 0:
+            pct_oecm = 100.0 * float(oecm_mask[site_mask].sum()) / n_overlap
+        else:
+            pct_oecm = np.nan
+
+        compact = _polsby_popper(geom)
+        dist_pa = _dist_to_pa_km(geom.centroid, pa_union)
+        gap_pct = _gap_overlap_pct(geom, gap_union)
+
+        records.append({
+            'site_id':             i + 1,
+            'site_name':           site_name,
+            'area_ha':             round(geom.area / 10_000.0, 1),
+            'mean_score':          round(mean_sc, 4) if not np.isnan(mean_sc) else np.nan,
+            'max_score':           round(max_sc, 4) if not np.isnan(max_sc) else np.nan,
+            'min_score':           round(min_sc, 4) if not np.isnan(min_sc) else np.nan,
+            'pct_eliminated':      round(pct_eliminated, 1) if not np.isnan(pct_eliminated) else np.nan,
+            'pct_oecm_favourable': round(pct_oecm, 1) if not np.isnan(pct_oecm) else np.nan,
+            'compactness':         round(compact, 3),
+            'dist_to_pa_km':       round(dist_pa, 2) if not np.isnan(dist_pa) else None,
+            'gap_overlap_pct':     round(gap_pct, 1),
+            'geometry':            geom,
+        })
+
+    gdf = gpd.GeoDataFrame(records, geometry='geometry', crs=crs)
+
+    # Same rank_score formula as delineate_patches(), for direct
+    # comparability with auto-delineated candidate sites. Sites with no
+    # valid score (outside the study area / fully eliminated) get rank 0
+    # rather than being excluded from normalisation.
+    def _norm01(series: pd.Series) -> pd.Series:
+        s = series.dropna()
+        if len(s) == 0:
+            return pd.Series(np.zeros(len(series)), index=series.index)
+        mn, mx = s.min(), s.max()
+        if mx == mn:
+            return pd.Series(np.where(series.notna(), 1.0, 0.0), index=series.index)
+        return ((series - mn) / (mx - mn)).fillna(0.0)
+
+    score_norm = _norm01(gdf['mean_score'])
+    gap_norm   = _norm01(gdf['gap_overlap_pct'])
+    area_norm  = _norm01(np.log1p(gdf['area_ha'].fillna(0)))
+
+    if gdf['dist_to_pa_km'].notna().any():
+        prox_norm = _norm01(-gdf['dist_to_pa_km'].fillna(gdf['dist_to_pa_km'].max()))
+    else:
+        prox_norm = pd.Series(np.zeros(len(gdf)), index=gdf.index)
+
+    gdf['rank_score'] = (
+        0.50 * score_norm +
+        0.20 * gap_norm   +
+        0.20 * area_norm  +
+        0.10 * prox_norm
+    ).round(4)
+
+    gdf = gdf.sort_values('rank_score', ascending=False).reset_index(drop=True)
+
+    logger.info(f"Evaluated {len(gdf)} externally-imported candidate site(s).")
+    return gdf

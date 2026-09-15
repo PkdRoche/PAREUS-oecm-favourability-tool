@@ -27,6 +27,20 @@ from . import raster_preprocessing
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Named inter-group weight scenarios for stakeholder-facing comparison
+# ("virtual laboratory" exploration of trade-offs between ecological
+# integrity, co-benefits and production function). Only W_A/W_B/W_C vary
+# between presets — intra-group weights are left at whatever the analyst has
+# set, so a preset changes the trade-off axis without requiring the full
+# weight set to be re-specified.
+# ---------------------------------------------------------------------------
+SCENARIO_PRESETS: dict[str, dict[str, float]] = {
+    'Biodiversity priority': {'W_A': 0.70, 'W_B': 0.10, 'W_C': 0.20},
+    'Services priority':     {'W_A': 0.25, 'W_B': 0.25, 'W_C': 0.50},
+    'Compromise':            {'W_A': 0.45, 'W_B': 0.20, 'W_C': 0.35},
+}
+
 
 def weighted_geometric_mean(
     arrays: list[np.ndarray],

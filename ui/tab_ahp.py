@@ -6,7 +6,7 @@ Provides pairwise comparison matrices for:
   - Group C intra-weights (provisioning, landuse) — 2×2
 
 Derived weights are written into session state and reflected in the
-sidebar sliders.  CR < 0.10 is required before weights can be applied.
+Parameters tab sliders.  CR < 0.10 is required before weights can be applied.
 """
 
 import numpy as np
@@ -159,7 +159,7 @@ def _weight_table(criteria: list[str], weights: np.ndarray) -> None:
 def render_tab_ahp() -> None:
     """Render the AHP Weight Calibration tab."""
 
-    st.header("② Weight Calibration — Analytic Hierarchy Process (AHP)")
+    st.header("③ Weight Calibration — Analytic Hierarchy Process (AHP)")
 
     st.markdown(
         """
@@ -169,13 +169,13 @@ def render_tab_ahp() -> None:
         Saaty's 1–9 scale.  The tool computes normalised weights and a
         **Consistency Ratio (CR)**; CR < 0.10 indicates coherent judgements.
 
-        Clicking **Apply to MCE** transfers the derived weights to the sidebar
-        sliders and marks them as `[AHP]` source.
+        Clicking **Apply to MCE** transfers the derived weights to the
+        **② Parameters** sliders and marks them as `[AHP]` source.
         """
     )
 
     st.info(
-        "AHP calibration is optional.  If you skip this tab, the sidebar "
+        "AHP calibration is optional.  If you skip this tab, **② Parameters** "
         "sliders retain their manual values."
     )
 
@@ -263,7 +263,7 @@ def render_tab_ahp() -> None:
                     "You may still apply, but consider revising judgements."
                 )
             apply = st.button(
-                "Apply AHP weights to sidebar",
+                "Apply AHP weights to Parameters",
                 type="primary",
                 use_container_width=True,
                 disabled=not (all_cr_ok or any_cr_marginal),
@@ -276,14 +276,14 @@ def render_tab_ahp() -> None:
                 "Please revise your pairwise judgements before applying."
             )
             apply = st.button(
-                "Apply AHP weights to sidebar",
+                "Apply AHP weights to Parameters",
                 type="primary",
                 use_container_width=True,
                 disabled=True,
             )
 
     if apply:
-        # Write derived weights into session state keys that sidebar.py reads
+        # Write derived weights into session state keys that tab_parameters.py reads
         st.session_state['ahp_weights'] = {
             # Inter-group
             'W_A': float(w_inter[0]),
@@ -297,9 +297,9 @@ def render_tab_ahp() -> None:
             'w_provisioning_es':   float(w_c[0]),
             'w_landuse_compatible': float(w_c[1]),
         }
-        st.session_state['ahp_source'] = True   # badge flag for sidebar
+        st.session_state['ahp_source'] = True   # badge flag for the Parameters tab
         st.success(
-            "AHP weights applied!  Switch to the sidebar — all weight sliders "
+            "AHP weights applied!  Switch to **② Parameters** — all weight sliders "
             "now reflect the AHP-derived values and are labelled **[AHP]**."
         )
         st.rerun()
@@ -314,7 +314,7 @@ def render_tab_ahp() -> None:
             if st.button("Reset to manual weights", use_container_width=True):
                 st.session_state.pop('ahp_weights', None)
                 st.session_state['ahp_source'] = False
-                st.info("Weights reset to manual sidebar values.")
+                st.info("Weights reset to manual Parameters tab values.")
                 st.rerun()
 
     # -----------------------------------------------------------------------

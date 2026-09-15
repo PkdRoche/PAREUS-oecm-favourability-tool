@@ -34,6 +34,98 @@ def iucn_category_sort_key(category: str):
         return (1, str(category))
 
 
+# Default CLC Level 1 labels (first digit of the CLC integer code)
+CLC_LEVEL1_LABELS = {
+    1: "Urban",
+    2: "Agricultural",
+    3: "Shrublands / Mixed",
+    4: "Forest",
+    5: "Water",
+}
+
+
+def clc_composition_by_iucn_category(
+    landuse_path: str,
+    pa_gdf: gpd.GeoDataFrame,
+    level1_labels: Optional[Dict[int, str]] = None,
+) -> pd.DataFrame:
+    """
+    Compute the % composition of CLC Level 1 categories for the whole raster
+    extent and within each IUCN protection category.
+
+    Shared by the Module 1 UI (Data Diagnostic tab) and the DOCX report
+    generator so the breakdown is computed once and reused, rather than
+    re-read/re-rasterized for each consumer.
+
+    Parameters
+    ----------
+    landuse_path : str
+        Path to the CLC (or CLC-coded) raster used as the 'landuse' criterion.
+    pa_gdf : gpd.GeoDataFrame
+        Protected areas GeoDataFrame with an IUCN_MAX or IUCN_CAT column.
+    level1_labels : dict, optional
+        Mapping of CLC Level 1 integer code → label. Defaults to
+        ``CLC_LEVEL1_LABELS``.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: 'level1' (int), 'category' (str), 'Whole Study Area' (float %),
+        then one float % column per IUCN category present in ``pa_gdf``, in
+        canonical IUCN order. Values are raw percentages, not pre-formatted.
+    """
+    from rasterio.features import rasterize as _rasterize
+
+    labels = level1_labels if level1_labels is not None else CLC_LEVEL1_LABELS
+
+    with rasterio.open(landuse_path) as src:
+        lu_array = src.read(1).astype(float)
+        lu_nodata = src.nodata
+        lu_transform = src.transform
+        lu_crs = src.crs
+    if lu_nodata is not None:
+        lu_array[lu_array == lu_nodata] = np.nan
+
+    h_lu, w_lu = lu_array.shape
+    valid_mask_all = ~np.isnan(lu_array)
+    level1_all = np.full(lu_array.shape, -1, dtype=int)
+    level1_all[valid_mask_all] = lu_array[valid_mask_all].astype(int) // 100
+
+    def _pct_by_level1(zone_mask: np.ndarray) -> Dict[int, float]:
+        selected = level1_all[zone_mask & valid_mask_all]
+        if selected.size == 0:
+            return {}
+        vals, counts = np.unique(selected, return_counts=True)
+        return {int(v): 100.0 * c / selected.size for v, c in zip(vals, counts)}
+
+    columns_pct = {'Whole Study Area': _pct_by_level1(np.ones((h_lu, w_lu), dtype=bool))}
+
+    iucn_col = 'IUCN_MAX' if 'IUCN_MAX' in pa_gdf.columns else 'IUCN_CAT'
+    if iucn_col in pa_gdf.columns:
+        pa_gdf_lu = pa_gdf.to_crs(lu_crs) if pa_gdf.crs != lu_crs else pa_gdf
+        cats_sorted = sorted(pa_gdf_lu[iucn_col].unique(), key=iucn_category_sort_key)
+        for cat in cats_sorted:
+            grp = pa_gdf_lu[pa_gdf_lu[iucn_col] == cat]
+            geoms = [(g, 1) for g in grp.geometry if g is not None and not g.is_empty]
+            if not geoms:
+                continue
+            cat_mask = _rasterize(
+                shapes=geoms, out_shape=(h_lu, w_lu), transform=lu_transform,
+                fill=0, dtype='uint8'
+            ).astype(bool)
+            columns_pct[str(cat)] = _pct_by_level1(cat_mask)
+
+    all_l1_codes = sorted({code for pct_map in columns_pct.values() for code in pct_map})
+    rows = []
+    for l1 in all_l1_codes:
+        row = {'level1': l1, 'category': labels.get(l1, f"Unknown ({l1})")}
+        for col_name, pct_map in columns_pct.items():
+            row[col_name] = pct_map.get(l1, 0.0)
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
 def zonal_stats_by_pa_class(
     pa_gdf: gpd.GeoDataFrame,
     raster_paths: Dict[str, str],

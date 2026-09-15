@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 st.set_page_config(
     page_title="OECM Favourability Tool",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Tab styling: bold labels, 2 rows of 2 (flex-wrap)
@@ -52,8 +52,8 @@ st.markdown(
 # ===================================================================
 # Import UI components
 # ===================================================================
-from ui.sidebar import render_sidebar
 from ui import tab_data_upload
+from ui.tab_parameters import render_parameters_tab
 from ui.tab_ahp import render_tab_ahp
 from ui.tab_module1 import render_tab_module1
 from ui import tab_module2
@@ -72,47 +72,46 @@ st.markdown(
     | Step | Module | Description |
     |---|---|---|
     | ① | **Data Upload** | Load WDPA protected areas, NUTS study-area boundaries, and MCE criterion rasters |
-    | ② | **Weight Calibration (AHP)** | Set criterion importance using Analytic Hierarchy Process pairwise comparisons |
-    | ③ | **Protection Network Diagnostic** | WDPA coverage statistics, KMGBF indicator, ecosystem representativity, gap analysis |
-    | ④ | **OECM Favourability Analysis** | Multi-criteria evaluation, candidate site delineation, sensitivity analysis, and GeoTIFF / DOCX export |
+    | ② | **Parameters** | Study area, thresholds, normalisation, aggregation method, weights, bonuses |
+    | ③ | **Weight Calibration (AHP)** | Set criterion importance using Analytic Hierarchy Process pairwise comparisons |
+    | ④ | **Protection Network Diagnostic** | WDPA coverage statistics, KMGBF indicator, ecosystem representativity, gap analysis |
+    | ⑤ | **OECM Favourability Analysis** | Multi-criteria evaluation, candidate site delineation, sensitivity analysis, and GeoTIFF / DOCX export |
     """
 )
 
 st.markdown("---")
 
 # ===================================================================
-# Sidebar: render parameter panel and store in session state
+# Tabs: Data Upload, Parameters, AHP, Module 1, and Module 2
 # ===================================================================
-with st.sidebar:
-    parameters = render_sidebar()
-
-# Store parameters in session state for access across tabs
-st.session_state['parameters'] = parameters
-
-# Store study area geometry separately for Module 1 compatibility
-if 'study_area_geometry' in parameters:
-    st.session_state['territory_geom'] = parameters['study_area_geometry']
-
-# Log current parameters (DEBUG level)
-logger.debug(f"Current parameters: {parameters}")
-
-# ===================================================================
-# Tabs: Data Upload, Module 1, and Module 2
-# ===================================================================
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "① Data Upload",
-    "② Weight Calibration (AHP)",
-    "③ Protection Network Diagnostic",
-    "④ OECM Favourability Analysis"
+    "② Parameters",
+    "③ Weight Calibration (AHP)",
+    "④ Protection Network Diagnostic",
+    "⑤ OECM Favourability Analysis"
 ])
 
 with tab1:
     tab_data_upload.render()
 
 with tab2:
-    render_tab_ahp()
+    parameters = render_parameters_tab()
+
+    # Store parameters in session state for access across tabs
+    st.session_state['parameters'] = parameters
+
+    # Store study area geometry separately for Module 1 compatibility
+    if 'study_area_geometry' in parameters:
+        st.session_state['territory_geom'] = parameters['study_area_geometry']
+
+    # Log current parameters (DEBUG level)
+    logger.debug(f"Current parameters: {parameters}")
 
 with tab3:
+    render_tab_ahp()
+
+with tab4:
     # Retrieve PA data from session state if available
     pa_gdf = st.session_state.get('pa_gdf', None)
     territory_geom = st.session_state.get('territory_geom', None)
@@ -125,7 +124,7 @@ with tab3:
         ecosystem_layer=ecosystem_layer
     )
 
-with tab4:
+with tab5:
     tab_module2.render_module2_tab()
 
 # ===================================================================

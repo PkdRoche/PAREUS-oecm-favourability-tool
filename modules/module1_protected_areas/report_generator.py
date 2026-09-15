@@ -49,6 +49,21 @@ _IUCN_COLOURS = {
 # Static map helpers
 # ---------------------------------------------------------------------------
 
+def _simplify_tolerance(territory_geom, figsize: tuple, dpi: int = 150) -> float:
+    """Tolerance (map units, metres for EPSG:3035) for one rendered pixel.
+
+    Used to simplify geometries before static map rendering. Detail finer
+    than one pixel is invisible in the output PNG but can cost matplotlib/GEOS
+    a lot of render time — WDPA boundaries and especially buffered/unioned gap
+    or corridor layers can have tens of thousands of vertices. Simplifying to
+    ~1 px is visually lossless at the report's actual embed size.
+    """
+    minx, miny, maxx, maxy = territory_geom.bounds
+    extent_m = max(maxx - minx, maxy - miny)
+    width_px = figsize[0] * dpi
+    return max(extent_m / width_px, 1.0) if width_px > 0 else 1.0
+
+
 def _pa_map_figure(
     pa_gdf: gpd.GeoDataFrame,
     territory_geom,
@@ -58,18 +73,27 @@ def _pa_map_figure(
     """Render PA network as a static matplotlib figure."""
     fig, ax = plt.subplots(figsize=figsize)
 
+    tol = _simplify_tolerance(territory_geom, figsize)
+
     # Territory boundary
-    territory_gs = gpd.GeoSeries([territory_geom], crs='EPSG:3035')
+    territory_gs = gpd.GeoSeries([territory_geom], crs='EPSG:3035').simplify(
+        tol, preserve_topology=True
+    )
     territory_gs.boundary.plot(ax=ax, color='black', linewidth=1.5, linestyle='--', label='Territory')
 
+    # Simplify PA geometries for display only — does not affect any stored/
+    # analytical data, just this rendered image.
+    pa_gdf_plot = pa_gdf.copy()
+    pa_gdf_plot['geometry'] = pa_gdf_plot.geometry.simplify(tol, preserve_topology=True)
+
     # PA polygons coloured by protection_class
-    if 'protection_class' in pa_gdf.columns:
-        for pclass, group in pa_gdf.groupby('protection_class'):
+    if 'protection_class' in pa_gdf_plot.columns:
+        for pclass, group in pa_gdf_plot.groupby('protection_class'):
             colour = iucn_classes.get(pclass, {}).get('colour', '#B4B2A9')
             label  = iucn_classes.get(pclass, {}).get('label', pclass)
             group.plot(ax=ax, color=colour, alpha=0.6, label=label)
     else:
-        pa_gdf.plot(ax=ax, color='#66BB6A', alpha=0.6, label='Protected areas')
+        pa_gdf_plot.plot(ax=ax, color='#66BB6A', alpha=0.6, label='Protected areas')
 
     ax.set_axis_off()
     ax.set_title('Protected Area Network', fontsize=14, fontweight='bold', pad=10)
@@ -86,7 +110,11 @@ def _gap_map_figure(
     """Render gap layers as a static matplotlib figure."""
     fig, ax = plt.subplots(figsize=figsize)
 
-    territory_gs = gpd.GeoSeries([territory_geom], crs='EPSG:3035')
+    tol = _simplify_tolerance(territory_geom, figsize)
+
+    territory_gs = gpd.GeoSeries([territory_geom], crs='EPSG:3035').simplify(
+        tol, preserve_topology=True
+    )
     territory_gs.boundary.plot(ax=ax, color='black', linewidth=1.5, linestyle='--', label='Territory')
 
     _layer_style = [
@@ -99,6 +127,11 @@ def _gap_map_figure(
         if gdf is not None and len(gdf) > 0:
             clean = gdf[~gdf.geometry.is_empty & gdf.geometry.notnull()]
             if len(clean) > 0:
+                # Gap/corridor geometries come from buffer + union operations
+                # and are often far more vertex-dense than source PA polygons —
+                # simplification matters most here.
+                clean = clean.copy()
+                clean['geometry'] = clean.geometry.simplify(tol, preserve_topology=True)
                 clean.plot(ax=ax, color=colour, alpha=0.5, label=label)
 
     ax.set_axis_off()
@@ -124,8 +157,13 @@ def _criterion_bar_figure(zonal_df: pd.DataFrame, figsize: tuple = (12, 6)) -> p
         if crit == 'anthropogenic_pressure':
             chart_data.loc[mask, 'mean'] = 1.0 - chart_data.loc[mask, 'mean']
 
+    from modules.module1_protected_areas.zonal_stats import iucn_category_sort_key
+
     criteria   = sorted(chart_data['criterion'].unique())
-    iucn_cats  = [c for c in sorted(chart_data['iucn_cat'].unique()) if c != 'outside']
+    iucn_cats  = sorted(
+        [c for c in chart_data['iucn_cat'].unique() if c != 'outside'],
+        key=iucn_category_sort_key
+    )
     if 'outside' in chart_data['iucn_cat'].unique():
         iucn_cats.append('outside')
 
@@ -201,6 +239,7 @@ def generate_docx_report(
     kmgbf_pct: float,
     net_area_ha: float,
     strict_pct: Optional[float] = None,
+    clc_composition_df: Optional[pd.DataFrame] = None,
 ) -> bytes:
     """
     Generate a DOCX diagnostic report for Module 1.
@@ -442,14 +481,24 @@ def generate_docx_report(
 
         _heading('4.3 Detailed Statistics (min / median / max / std)', level=2)
         try:
+            from modules.module1_protected_areas.zonal_stats import iucn_category_sort_key
+
             detailed = []
             for criterion in zonal_df['criterion'].unique():
                 if criterion == 'landuse':
                     continue
-                for _, row in zonal_df[zonal_df['criterion'] == criterion].iterrows():
+                criterion_data = zonal_df[zonal_df['criterion'] == criterion]
+                cats_present = criterion_data['iucn_cat'].unique()
+                cats_sorted = sorted(
+                    [c for c in cats_present if c != 'outside'], key=iucn_category_sort_key
+                )
+                if 'outside' in cats_present:
+                    cats_sorted.append('outside')
+                for cat in cats_sorted:
+                    row = criterion_data[criterion_data['iucn_cat'] == cat].iloc[0]
                     detailed.append({
                         'Criterion':      criterion,
-                        'IUCN Category':  row['iucn_cat'],
+                        'IUCN Category':  cat,
                         'Min':            f"{row['min']:.3f}",
                         'Median':         f"{row['median']:.3f}",
                         'Max':            f"{row['max']:.3f}",
@@ -459,6 +508,25 @@ def generate_docx_report(
             _add_table(pd.DataFrame(detailed))
         except Exception as e:
             doc.add_paragraph(f'[Table unavailable: {e}]')
+
+        # -------------------------------------------------------------------
+        # 4.4 Land Use Composition (CLC Level 1)
+        # -------------------------------------------------------------------
+        if clc_composition_df is not None and len(clc_composition_df) > 0:
+            _heading('4.4 Land Use Composition (CLC Level 1)', level=2)
+            doc.add_paragraph(
+                'Share of each Corine Land Cover Level 1 category (% of valid pixels), '
+                'for the whole study area and within each IUCN protection category.'
+            )
+            try:
+                clc_disp = clc_composition_df.rename(
+                    columns={'level1': 'Level 1', 'category': 'Category'}
+                ).copy()
+                for col in clc_disp.columns[2:]:
+                    clc_disp[col] = clc_disp[col].apply(lambda x: f"{x:.1f}%")
+                _add_table(clc_disp)
+            except Exception as e:
+                doc.add_paragraph(f'[Table unavailable: {e}]')
 
     # -----------------------------------------------------------------------
     # Footer

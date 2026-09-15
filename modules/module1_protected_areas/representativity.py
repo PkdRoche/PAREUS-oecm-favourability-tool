@@ -553,3 +553,138 @@ def propose_group_a_weights(
     assert abs(weight_sum - 1.0) < 1e-6, f"Weights do not sum to 1.0: {weight_sum}"
 
     return weights
+
+
+def clc_groups_for_level(clc_level: int) -> dict[str, set]:
+    """
+    Build {group_label: set(CLC codes)} from the full official CLC 2018
+    nomenclature (``modules.utils.clc_loader.get_clc_legend``) at the
+    requested hierarchy level.
+
+    Parameters
+    ----------
+    clc_level : int
+        1 -> 5 broad classes (e.g. "Forest and semi-natural areas")
+        2 -> 15 classes (e.g. "Forests", "Pastures")
+        3 -> 44 classes, the full CLC nomenclature (e.g. "311 - Broad-leaved forest")
+
+    Returns
+    -------
+    dict[str, set[int]]
+        Group label -> set of CLC integer codes belonging to it, in CLC
+        code order. Unlike ``_CLC_ECOSYSTEM_GROUPS`` (used for the
+        conservation-representativity index), this covers **all** land
+        cover, including artificial surfaces — appropriate for a complete
+        extent account rather than a conservation-target subset.
+    """
+    from modules.utils.clc_loader import get_clc_legend
+
+    level_key = {1: 'level1', 2: 'level2', 3: 'label'}.get(clc_level)
+    if level_key is None:
+        raise ValueError(f"clc_level must be 1, 2 or 3 (got {clc_level})")
+
+    legend = get_clc_legend()
+    groups: dict[str, set] = {}
+    for code in sorted(legend.keys()):
+        meta = legend[code]
+        label = f"{code} - {meta[level_key]}" if clc_level == 3 else meta[level_key]
+        groups.setdefault(label, set()).add(code)
+    return groups
+
+
+def ecosystem_account_table(
+    aligned_arrays: dict,
+    profile: dict,
+    clc_level: int = 1,
+    ecosystem_groups: Optional[dict] = None,
+) -> pd.DataFrame:
+    """
+    Build a habitat-level ecosystem account: extent, condition and service
+    capacity per broad ecosystem type — the "Habitats x Surface x Condition x
+    Capacite en services" table (WP5 ecosystem-accounting data stream,
+    complementing the socio-ecological mapping already produced elsewhere).
+
+    Mirrors the SEEA Ecosystem Accounting logic (extent account + condition
+    account + services account), computed directly from the same aligned
+    criterion rasters used by the MCE engine, on the same pixel grid — so the
+    table is exactly consistent with whatever favourability run it accompanies,
+    with no separate re-sampling step.
+
+    Parameters
+    ----------
+    aligned_arrays : dict
+        Mapping criterion name -> np.ndarray, all on the same grid as
+        ``profile`` (i.e. st.session_state['_aligned_arrays'] in the UI).
+        Must include 'landuse', 'ecosystem_condition', 'regulating_es',
+        'cultural_es' and 'provisioning_es'.
+    profile : dict
+        Rasterio profile matching the aligned arrays (transform, crs).
+    clc_level : int, default 1
+        Corine Land Cover hierarchy level to group habitats by — 1 (5
+        classes), 2 (15 classes) or 3 (44 classes, full nomenclature).
+        Ignored if ``ecosystem_groups`` is given explicitly.
+    ecosystem_groups : dict, optional
+        Mapping ecosystem-type label -> set of CLC integer codes, overriding
+        ``clc_level`` entirely. Pass ``_CLC_ECOSYSTEM_GROUPS`` for the
+        6-category, conservation-target-only taxonomy used elsewhere in
+        Module 1 (excludes artificial surfaces).
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per ecosystem type plus a "Whole study area" total row.
+        Columns: ecosystem_type, area_ha, pct_area, condition_mean,
+        regulating_es_mean, cultural_es_mean, provisioning_es_mean.
+        Condition/service columns are NaN for a type with zero valid pixels.
+    """
+    groups = ecosystem_groups if ecosystem_groups is not None else clc_groups_for_level(clc_level)
+
+    required = ['landuse', 'ecosystem_condition', 'regulating_es', 'cultural_es', 'provisioning_es']
+    missing = [k for k in required if k not in aligned_arrays]
+    if missing:
+        raise ValueError(f"aligned_arrays is missing required layer(s): {missing}")
+
+    landuse = aligned_arrays['landuse']
+    transform = profile['transform']
+    pixel_area_ha = abs(transform[0] * transform[4]) / 10_000.0
+
+    valid_lu = ~np.isnan(landuse)
+    total_valid_px = int(valid_lu.sum())
+
+    def _service_means(mask: np.ndarray) -> dict:
+        out = {}
+        for key, col in [
+            ('condition_mean', 'ecosystem_condition'),
+            ('regulating_es_mean', 'regulating_es'),
+            ('cultural_es_mean', 'cultural_es'),
+            ('provisioning_es_mean', 'provisioning_es'),
+        ]:
+            arr = aligned_arrays[col][mask]
+            arr = arr[~np.isnan(arr)]
+            out[key] = float(np.mean(arr)) if arr.size > 0 else np.nan
+        return out
+
+    rows = []
+    for label, codes in groups.items():
+        mask = valid_lu & np.isin(landuse, list(codes))
+        n_px = int(mask.sum())
+        row = {
+            'ecosystem_type': label,
+            'area_ha': round(n_px * pixel_area_ha, 1),
+            'pct_area': round(100.0 * n_px / total_valid_px, 1) if total_valid_px > 0 else 0.0,
+        }
+        row.update(_service_means(mask))
+        rows.append(row)
+
+    # Whole-study-area total row, for reference
+    total_row = {
+        'ecosystem_type': 'Whole study area',
+        'area_ha': round(total_valid_px * pixel_area_ha, 1),
+        'pct_area': 100.0,
+    }
+    total_row.update(_service_means(valid_lu))
+    rows.append(total_row)
+
+    df = pd.DataFrame(rows)
+    logger.info(f"Ecosystem account built: {len(groups)} habitat types, {total_valid_px} valid pixels")
+    return df
