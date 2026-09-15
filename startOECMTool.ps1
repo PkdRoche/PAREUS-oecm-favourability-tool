@@ -3,7 +3,7 @@
     Run from the project root, with the virtual environment already created
     and activated (see README.md - "Local Installation"):
 
-        .\start.ps1
+        .\startOECMTool.ps1
 #>
 
 # ---------------------------------------------------------------------------
