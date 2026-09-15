@@ -1,6 +1,7 @@
 """OECM Favourability Tool — Streamlit entry point."""
 import streamlit as st
 import logging
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(
@@ -57,6 +58,22 @@ from ui.tab_parameters import render_parameters_tab
 from ui.tab_ahp import render_tab_ahp
 from ui.tab_module1 import render_tab_module1
 from ui import tab_module2
+
+# ===================================================================
+# Project logos (PAREUS / INRAE)
+# ===================================================================
+_ROOT_DIR = Path(__file__).parent
+_pareus_logo = _ROOT_DIR / "PAREUSlogo.png"
+_inrae_logo = _ROOT_DIR / "INRAE_logo.png"
+
+if _pareus_logo.exists() or _inrae_logo.exists():
+    logo_col1, logo_col2, _logo_spacer = st.columns([2.2, 1.8, 4])
+    with logo_col1:
+        if _pareus_logo.exists():
+            st.image(str(_pareus_logo), width=240)
+    with logo_col2:
+        if _inrae_logo.exists():
+            st.image(str(_inrae_logo), width=197)
 
 # ===================================================================
 # Main title and description
