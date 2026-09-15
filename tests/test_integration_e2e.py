@@ -150,9 +150,13 @@ def test_step1_nuts2_loader_mock(synthetic_nuts2_gdf):
     """Test NUTS2 loader with mocked Eurostat API call."""
     # Mock the requests.get call to avoid real network access
     with patch('modules.utils.nuts2_loader.requests.get') as mock_get:
-        # Configure mock response
+        # Configure mock response. load_nuts2() reads the already-downloaded
+        # bytes via gpd.read_file(io.BytesIO(response.content)) — .content
+        # must be real bytes so io.BytesIO() doesn't choke on a MagicMock,
+        # even though gpd.read_file itself is mocked below.
         mock_response = MagicMock()
         mock_response.status_code = 200
+        mock_response.content = b'{}'
         mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
 
@@ -428,7 +432,7 @@ def test_step6_zonal_stats_by_pa_class(synthetic_wdpa_gdf, synthetic_raster_path
 
     assert isinstance(stats_df, pd.DataFrame)
     assert 'criterion' in stats_df.columns
-    assert 'pa_class' in stats_df.columns
+    assert 'iucn_cat' in stats_df.columns
     assert 'mean' in stats_df.columns
     assert 'median' in stats_df.columns
     assert 'std' in stats_df.columns
@@ -711,7 +715,7 @@ def test_full_e2e_pipeline(
 
     assert len(zonal_df) > 0
     assert 'criterion' in zonal_df.columns
-    assert 'pa_class' in zonal_df.columns
+    assert 'iucn_cat' in zonal_df.columns
 
     # Step 7: Raster preprocessing
     raster_dict = {}

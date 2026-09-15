@@ -56,6 +56,9 @@ def render_parameters_tab():
             'exclude_pa_pixels':         'exclude_pa_pixels',
             'exclude_pa_classes':        'exclude_pa_classes',
             'show_pa_overlay':           'show_pa_overlay',
+            'provisioning_calibration_mode': 'provisioning_calibration_mode',
+            'provisioning_mean':         'provisioning_mean',
+            'provisioning_std':          'provisioning_std',
         }
         for _param_name, _widget_key in _param_to_widget_key.items():
             if _param_name in _pending_params:
@@ -692,6 +695,59 @@ def render_parameters_tab():
         # PA overlay toggle lives inline in the map tab (avoids duplicate key conflict).
         show_pa_overlay = st.session_state.get('show_pa_overlay', True)
 
+        # -------------------------------------------------------------
+        # Section 6f: Provisioning ES Calibration
+        # -------------------------------------------------------------
+        st.markdown("**6f. Provisioning ES Calibration**")
+        st.caption(
+            "Provisioning ES uses a bell-curve (Gaussian) score: a moderate "
+            "use level scores highest, both near-zero and very high use score "
+            "lower (SPECIFICATIONS.md 4.2)."
+        )
+        provisioning_calibration_mode = st.radio(
+            "Optimum & spread",
+            options=["fixed", "auto"],
+            format_func=lambda v: (
+                "Fixed value (default — recommended)" if v == "fixed"
+                else "Auto-calibrate to this territory's data (advanced)"
+            ),
+            key='provisioning_calibration_mode',
+            horizontal=True,
+        )
+        provisioning_mean = None
+        provisioning_std = None
+        if provisioning_calibration_mode == "auto":
+            st.warning(
+                "Auto-calibration re-centres \"moderate use\" on this territory's "
+                "own average provisioning value, so a territory that is uniformly "
+                "pristine or uniformly intensively-used will score its own average "
+                "as near-optimal. That is a *relative*, within-territory judgement — "
+                "it can mask a genuine \"this whole territory lacks sustainable-use "
+                "character, better suited to classical PA\" signal (see the "
+                "classical_pa_mask flag). Use this deliberately, e.g. to rank "
+                "candidate micro-sites *within* one already-selected territory — "
+                "not as a general fix for low favourability scores."
+            )
+            _calib = st.session_state.get('provisioning_calibration')
+            if _calib and _calib.get('auto'):
+                st.caption(
+                    f"Last run calibrated to: mean={_calib['mean']:.2f}, "
+                    f"std={_calib['std']:.2f}"
+                )
+        else:
+            provisioning_mean = st.slider(
+                "Optimum provisioning level (mean)",
+                min_value=0.0, max_value=1.0, value=0.45, step=0.05,
+                key='provisioning_mean',
+                help="Raw provisioning_es value that scores highest.",
+            )
+            provisioning_std = st.slider(
+                "Spread around optimum (std)",
+                min_value=0.05, max_value=0.60, value=0.35, step=0.05,
+                key='provisioning_std',
+                help="Wider = more tolerant of values far from the optimum.",
+            )
+
     st.divider()
 
     # -------------------------------------------------------------
@@ -781,4 +837,8 @@ def render_parameters_tab():
         'exclude_pa_pixels': exclude_pa_pixels,
         'exclude_pa_classes': exclude_pa_classes,
         'show_pa_overlay': show_pa_overlay,
+        'provisioning_calibration_mode': provisioning_calibration_mode,
+        'auto_calibrate_provisioning': provisioning_calibration_mode == "auto",
+        'provisioning_mean': provisioning_mean,
+        'provisioning_std': provisioning_std,
     }

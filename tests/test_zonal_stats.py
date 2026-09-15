@@ -109,7 +109,7 @@ def test_zonal_stats_returns_dataframe(sample_pa_gdf, sample_raster_paths):
     assert isinstance(result, pd.DataFrame), "Output must be a pandas DataFrame"
 
     # Verify required columns
-    required_cols = ['criterion', 'pa_class', 'mean', 'median', 'std', 'min', 'max', 'pixel_count']
+    required_cols = ['criterion', 'iucn_cat', 'mean', 'median', 'std', 'min', 'max', 'pixel_count']
     for col in required_cols:
         assert col in result.columns, f"Missing column: {col}"
 
@@ -117,9 +117,8 @@ def test_zonal_stats_returns_dataframe(sample_pa_gdf, sample_raster_paths):
     assert len(result) > 0, "Result should contain at least one row"
 
     # Verify we have stats for multiple criteria and classes
-    # 4 criteria × (3 PA classes + 1 outside) = 16 rows expected
+    # 4 criteria × (3 IUCN categories + 1 outside) = 16 rows expected
     n_criteria = len(sample_raster_paths)
-    n_pa_classes = len(sample_pa_gdf['protection_class'].unique())
     expected_min_rows = n_criteria  # At least one row per criterion
     assert len(result) >= expected_min_rows, f"Expected at least {expected_min_rows} rows"
 
@@ -160,14 +159,14 @@ def test_zonal_stats_mean_in_valid_range(sample_pa_gdf, sample_raster_paths):
         for _, row in criterion_rows.iterrows():
             mean_val = row['mean']
             assert global_min <= mean_val <= global_max, (
-                f"Mean {mean_val} for {criterion}/{row['pa_class']} outside valid range "
+                f"Mean {mean_val} for {criterion}/{row['iucn_cat']} outside valid range "
                 f"[{global_min}, {global_max}]"
             )
 
             # Also verify min ≤ mean ≤ max within each zone
             assert row['min'] <= mean_val <= row['max'], (
                 f"Mean {mean_val} not between min {row['min']} and max {row['max']} "
-                f"for {criterion}/{row['pa_class']}"
+                f"for {criterion}/{row['iucn_cat']}"
             )
 
 
@@ -177,7 +176,7 @@ def test_zonal_stats_outside_class_present(sample_pa_gdf, sample_raster_paths):
 
     # Verify 'outside' class exists for each criterion
     for criterion in sample_raster_paths.keys():
-        outside_rows = result[(result['criterion'] == criterion) & (result['pa_class'] == 'outside')]
+        outside_rows = result[(result['criterion'] == criterion) & (result['iucn_cat'] == 'outside')]
         assert len(outside_rows) > 0, f"'outside' class missing for criterion: {criterion}"
 
         # Verify 'outside' has positive pixel count
@@ -212,7 +211,7 @@ def test_criterion_coverage_summary_shape(sample_pa_gdf, sample_raster_paths):
     assert isinstance(summary, pd.DataFrame)
 
     # Expected dimensions
-    unique_classes = zonal_df['pa_class'].unique()
+    unique_classes = zonal_df['iucn_cat'].unique()
     unique_criteria = zonal_df['criterion'].unique()
 
     expected_n_rows = len(unique_classes)
@@ -235,13 +234,13 @@ def test_criterion_coverage_summary_values_match_zonal_means(sample_pa_gdf, samp
     summary = criterion_coverage_summary(zonal_df)
 
     # Verify each cell matches the corresponding mean value
-    for pa_class in summary.index:
+    for iucn_cat in summary.index:
         for criterion in summary.columns:
-            pivot_value = summary.loc[pa_class, criterion]
+            pivot_value = summary.loc[iucn_cat, criterion]
 
             # Find corresponding row in zonal_df
             matching_row = zonal_df[
-                (zonal_df['pa_class'] == pa_class) &
+                (zonal_df['iucn_cat'] == iucn_cat) &
                 (zonal_df['criterion'] == criterion)
             ]
 
@@ -251,7 +250,7 @@ def test_criterion_coverage_summary_values_match_zonal_means(sample_pa_gdf, samp
                 # Values should match (allowing for floating-point precision)
                 assert abs(pivot_value - zonal_mean) < 1e-6, (
                     f"Pivot value {pivot_value} does not match zonal mean {zonal_mean} "
-                    f"for {pa_class}/{criterion}"
+                    f"for {iucn_cat}/{criterion}"
                 )
 
 

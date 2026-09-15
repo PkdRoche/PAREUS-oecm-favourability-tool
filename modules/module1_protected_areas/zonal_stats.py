@@ -370,13 +370,13 @@ def criterion_coverage_summary(
     ----------
     zonal_df : pd.DataFrame
         Output from zonal_stats_by_pa_class() with columns:
-        criterion, pa_class, mean, median, std, min, max, pixel_count
+        criterion, iucn_cat, mean, median, std, min, max, pixel_count
 
     Returns
     -------
     pd.DataFrame
         Pivot table with:
-        - Index: pa_class
+        - Index: iucn_cat
         - Columns: criterion names
         - Values: mean criterion values
 
@@ -385,11 +385,11 @@ def criterion_coverage_summary(
     >>> summary = criterion_coverage_summary(zonal_df)
     >>> print(summary)
                       ecosystem_condition  connectivity  species_richness
-    pa_class
-    strict_core                    0.75          0.82              0.68
-    regulatory                     0.65          0.74              0.55
-    contractual                    0.58          0.68              0.50
-    outside                        0.45          0.52              0.38
+    iucn_cat
+    II                              0.75          0.82              0.68
+    IV                              0.65          0.74              0.55
+    V                               0.58          0.68              0.50
+    outside                         0.45          0.52              0.38
     """
     if len(zonal_df) == 0:
         logger.warning("Input DataFrame is empty, returning empty summary")

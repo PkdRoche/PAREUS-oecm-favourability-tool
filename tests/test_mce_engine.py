@@ -61,9 +61,13 @@ class TestWeightedGeometricMean:
             mce_engine.weighted_geometric_mean(arrays, weights)
 
     def test_geometric_mean_zero_criterion_nullifies_score(self):
-        """Test that a zero criterion results in zero output.
+        """Test that a zero criterion drives the output very close to zero.
 
-        This is the key non-compensatory property of geometric mean.
+        This is the key non-compensatory property of geometric mean. Per
+        weighted_geometric_mean's own docstring, exact 0 inputs are floored
+        to 1e-9 before the log-space computation (not treated as exact 0)
+        so the result is driven very close to — but not exactly — 0; hard
+        pixel elimination is handled upstream by the Group D mask instead.
         """
         arrays = [np.array([0.8, 0.0]), np.array([0.5, 0.9])]
         weights = [0.6, 0.4]
@@ -73,8 +77,8 @@ class TestWeightedGeometricMean:
         # First pixel: normal calculation
         assert result[0] > 0
 
-        # Second pixel: zero in first array -> result must be 0
-        assert result[1] == 0.0
+        # Second pixel: zero in first array -> result must be driven near-zero
+        assert result[1] < 1e-4
 
     def test_geometric_mean_nan_propagation(self):
         """Test that NaN in any criterion propagates to output."""

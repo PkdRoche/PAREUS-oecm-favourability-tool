@@ -1246,6 +1246,9 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                                 alpha=params['alpha'],
                                 threshold_pressure=params.get('threshold_pressure', 150.0),
                                 percentile_norm=params.get('percentile_norm', False),
+                                auto_calibrate_provisioning=params.get('auto_calibrate_provisioning', True),
+                                provisioning_mean=params.get('provisioning_mean'),
+                                provisioning_std=params.get('provisioning_std'),
                             )
                             _results_sc[_name] = _res['score']
 
@@ -1541,6 +1544,15 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                             'timestamp': datetime.now().isoformat(),
                             'spec_version': 'v0.1'
                         }
+
+                    # Log the actually-used provisioning calibration (params_full's
+                    # provisioning_mean/std are None when auto-calibration is on —
+                    # the real computed values live in session_state, set by the
+                    # compute_favourability() call above).
+                    _prov_calib = st.session_state.get('provisioning_calibration')
+                    if _prov_calib:
+                        params_full['provisioning_mean_used'] = round(_prov_calib['mean'], 3)
+                        params_full['provisioning_std_used']  = round(_prov_calib['std'], 3)
 
                     # ── Pull in every other analysis actually run this session ──
                     weights_df_docx = _criterion_weights_df(params) if params is not None else None
@@ -1895,12 +1907,16 @@ def render_module2_tab():
                             proximity_bonus=parameters.get('proximity_bonus', 0.0),
                             proximity_decay_km=parameters.get('proximity_decay_km', 10.0),
                             pa_proximity_raster=pa_proximity_raster,
+                            auto_calibrate_provisioning=parameters.get('auto_calibrate_provisioning', True),
+                            provisioning_mean=parameters.get('provisioning_mean'),
+                            provisioning_std=parameters.get('provisioning_std'),
                         )
 
                     score_out        = results['score'].copy()
                     oecm_mask_out    = results['oecm_mask'].copy()
                     classical_out    = results['classical_pa_mask'].copy()
                     elim_mask_out    = results['eliminatory_mask'].copy()
+                    st.session_state['provisioning_calibration'] = results.get('provisioning_calibration')
 
                     # ── Optional: mask out pixels inside existing PAs ────────
                     if parameters.get('exclude_pa_pixels') and 'pa_gdf' in st.session_state:
