@@ -96,6 +96,14 @@ st.markdown(
     """
 )
 
+# ===================================================================
+# Instructions — input data requirements (INSTRUCTIONS.md)
+# ===================================================================
+_instructions_path = _ROOT_DIR / "INSTRUCTIONS.md"
+if _instructions_path.exists():
+    with st.expander("📄 Instructions — input data requirements"):
+        st.markdown(_instructions_path.read_text(encoding="utf-8"))
+
 st.markdown("---")
 
 # ===================================================================
