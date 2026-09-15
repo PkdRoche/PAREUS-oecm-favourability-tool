@@ -2,7 +2,6 @@
 
 import pytest
 import numpy as np
-import geopandas as gpd
 from shapely.geometry import box
 import rasterio
 from rasterio.transform import from_origin

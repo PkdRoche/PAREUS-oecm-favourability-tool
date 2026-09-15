@@ -8,7 +8,6 @@ import shapely.geometry.base
 from shapely.ops import unary_union
 import rasterio
 from rasterio.features import rasterize
-import numpy as np
 
 logger = logging.getLogger(__name__)
 

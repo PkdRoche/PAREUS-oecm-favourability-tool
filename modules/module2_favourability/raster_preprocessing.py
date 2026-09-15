@@ -9,7 +9,6 @@ import numpy as np
 import rasterio
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 from rasterio.transform import from_bounds
-from rasterio.mask import mask as rasterio_mask
 import yaml
 from pathlib import Path
 from typing import Optional
@@ -638,13 +637,6 @@ def align_rasters(
         aligned = {}
         aligned[reference_name] = (ref_array.copy(), ref_profile.copy())
 
-        # Get reference bounds
-        ref_bounds = rasterio.transform.array_bounds(
-            ref_profile['height'],
-            ref_profile['width'],
-            ref_profile['transform']
-        )
-
         # Align all other rasters to reference
         for name in sorted_names[1:]:
             src_array, src_profile = raster_dict[name]
@@ -963,7 +955,7 @@ def normalize_layer(
         vmin = p_low  if percentile_norm else params.get('vmin')
         vmax = p_high if percentile_norm else params.get('vmax')
         if vmin is None or vmax is None:
-            raise ValueError(f"Linear transformation requires 'vmin' and 'vmax' parameters")
+            raise ValueError("Linear transformation requires 'vmin' and 'vmax' parameters")
         return normalize_linear(array, vmin=vmin, vmax=vmax,
                                 invert=params.get('invert', False))
 
@@ -979,14 +971,14 @@ def normalize_layer(
 
     elif transform_type == 'sigmoid':
         if 'inflection' not in params or 'slope' not in params:
-            raise ValueError(f"Sigmoid transformation requires 'inflection' and 'slope' parameters")
+            raise ValueError("Sigmoid transformation requires 'inflection' and 'slope' parameters")
         return normalize_sigmoid(array,
                                  inflection=params['inflection'],
                                  slope=params['slope'])
 
     elif transform_type == 'gaussian':
         if 'mean' not in params or 'std' not in params:
-            raise ValueError(f"Gaussian transformation requires 'mean' and 'std' parameters")
+            raise ValueError("Gaussian transformation requires 'mean' and 'std' parameters")
         return normalize_gaussian(array,
                                   mean=params['mean'],
                                   std=params['std'])
@@ -1140,7 +1132,7 @@ def validate_and_rescale_layer(
 
         # Case 3: Arbitrary range - linear min-max rescale
         else:
-            logger.info(f"Values outside [0, 100], applying min-max rescaling")
+            logger.info("Values outside [0, 100], applying min-max rescaling")
             # Linear rescale: (x - min) / (max - min)
             if original_max > original_min:
                 array_out = (array_out - original_min) / (original_max - original_min)
@@ -1170,8 +1162,8 @@ def validate_and_rescale_layer(
         # Warn if already normalized
         if original_min >= 0.0 and original_max <= 1.0:
             warning_msg = (
-                f"Values appear already normalised to [0, 1]. "
-                f"MCE will apply sigmoid/linear transform which may compress range further."
+                "Values appear already normalised to [0, 1]. "
+                "MCE will apply sigmoid/linear transform which may compress range further."
             )
             logger.warning(warning_msg)
             report['warning'] = warning_msg
@@ -1191,8 +1183,8 @@ def validate_and_rescale_layer(
         if array.dtype in [np.float32, np.float64]:
             if original_min >= 0.0 and original_max <= 1.0:
                 warning_msg = (
-                    f"Values are floats in [0, 1], which looks like a pre-normalised layer, "
-                    f"not raw CLC codes [111-523]."
+                    "Values are floats in [0, 1], which looks like a pre-normalised layer, "
+                    "not raw CLC codes [111-523]."
                 )
                 logger.warning(warning_msg)
                 report['warning'] = warning_msg
@@ -1279,7 +1271,7 @@ def validate_and_rescale_all_layers(
             elif report['warning']:
                 logger.warning(f"  ⚠ {report['warning']}")
             else:
-                logger.info(f"  ✓ No rescaling needed")
+                logger.info("  ✓ No rescaling needed")
 
         except Exception as e:
             logger.error(f"Failed to validate '{criterion_key}': {e}")

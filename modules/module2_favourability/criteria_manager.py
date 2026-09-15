@@ -22,7 +22,6 @@ import logging
 import numpy as np
 import yaml
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

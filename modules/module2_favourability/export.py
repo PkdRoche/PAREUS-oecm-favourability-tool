@@ -322,55 +322,16 @@ def _sites_map_figure(sites_gdf: gpd.GeoDataFrame, title: str,
     return fig
 
 
-def _fig_to_rl_image(fig, width_cm: float = 16.0):
-    """Rasterise a matplotlib figure into a reportlab Image, aspect-ratio preserved."""
-    from reportlab.platypus import Image as RLImage
-    from reportlab.lib.units import cm
-    from PIL import Image as PILImage
-
+def _fig_to_bytes(fig, dpi: int = 150) -> bytes:
+    """Render a matplotlib figure to PNG bytes."""
     buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight')
     plt.close(fig)
     buf.seek(0)
-    pil_img = PILImage.open(buf)
-    w, h = pil_img.size
-    buf.seek(0)
-    height_cm = width_cm * h / w
-    return RLImage(buf, width=width_cm * cm, height=height_cm * cm)
+    return buf.read()
 
 
-def _df_to_rl_table(df: pd.DataFrame, styles, col_widths=None):
-    """Convert a DataFrame to a styled reportlab Table, wrapping header text."""
-    from reportlab.platypus import Table, TableStyle, Paragraph
-    from reportlab.lib import colors
-
-    header_style = styles['Normal'].clone('header')
-    header_style.textColor = colors.whitesmoke
-    header_style.fontSize = 8
-    header_style.fontName = 'Helvetica-Bold'
-    cell_style = styles['Normal'].clone('cell')
-    cell_style.fontSize = 8
-
-    header_row = [Paragraph(str(c), header_style) for c in df.columns]
-    body_rows = [
-        [Paragraph(str(v), cell_style) for v in row]
-        for row in df.values.tolist()
-    ]
-    table = Table([header_row] + body_rows, colWidths=col_widths, repeatRows=1)
-    table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2E7D32')),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-        ('TOPPADDING', (0, 0), (-1, 0), 6),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-    ]))
-    return table
-
-
-def generate_pdf_report(
-    output_path: str,
+def generate_docx_report(
     parameters: dict,
     score_array: np.ndarray,
     profile: dict,
@@ -384,15 +345,15 @@ def generate_pdf_report(
     imported_sites: Optional[gpd.GeoDataFrame] = None,
     scenario_scores: Optional[Dict[str, np.ndarray]] = None,
     scenario_profile: Optional[dict] = None,
-) -> None:
+) -> bytes:
     """
-    Generate a comprehensive PDF report covering every Module 2 analysis that
-    has actually been run in the current session.
+    Generate a comprehensive DOCX report covering every ⑤ OECM Favourability
+    Analysis result that has actually been run in the current session —
+    same document style as the ④ Protection Network Diagnostic report
+    (modules.module1_protected_areas.report_generator.generate_docx_report).
 
     Parameters
     ----------
-    output_path : str
-        Path for output PDF file.
     parameters : dict
         Complete parameter dictionary (method, alpha, weights, thresholds,
         timestamp, spec_version, ...) — logged in full at the end of the report.
@@ -404,8 +365,7 @@ def generate_pdf_report(
     stats_df : pd.DataFrame
         Summary statistics table (territory/eligible/OECM areas, median score, ...).
     display_threshold : float, optional
-        Threshold used for the score-distribution vline and implicitly for any
-        exported polygons. Default 0.5.
+        Threshold used for the score-distribution vline. Default 0.5.
     oecm_mask : np.ndarray, optional
         Boolean OECM-favourable mask — currently informational only (already
         reflected in stats_df); kept for future use (e.g. a favourable-only map).
@@ -431,106 +391,141 @@ def generate_pdf_report(
         Rasterio profile matching scenario_scores arrays (required if
         scenario_scores is provided).
 
+    Returns
+    -------
+    bytes
+        Raw bytes of the .docx file, ready for a download button.
+
     Raises
     ------
     ImportError
-        If reportlab is not installed.
-    OSError
-        If output file cannot be written.
+        If python-docx is not installed.
 
     Notes
     -----
     Every optional section is skipped silently (not left blank) when its data
     was not provided — i.e. when that analysis was never run in this session.
     All maps are static matplotlib renders (colorbar + scale bar + title),
-    since only they can be embedded in a PDF — the live app's interactive
-    folium maps cannot.
+    since only they can be embedded in a document — the live app's
+    interactive folium maps cannot.
     """
     try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.platypus import (
-            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
-        )
-        from reportlab.lib.styles import getSampleStyleSheet
-        from reportlab.lib.units import cm
-        from reportlab.lib import colors
-    except ImportError:
+        from docx import Document
+        from docx.shared import Inches, Pt, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+    except ImportError as e:
         raise ImportError(
-            "reportlab is required for PDF generation. "
-            "Install with: pip install reportlab"
-        )
+            "python-docx is required for DOCX export. "
+            "Install with: pip install python-docx"
+        ) from e
 
-    logger.info(f"Generating comprehensive PDF report: {output_path}...")
+    from datetime import datetime
 
-    doc = SimpleDocTemplate(output_path, pagesize=A4,
-                             topMargin=1.5 * cm, bottomMargin=1.5 * cm)
-    story = []
-    styles = getSampleStyleSheet()
+    logger.info("Generating comprehensive DOCX report...")
 
-    # =========================================================================
+    doc = Document()
+
+    # -----------------------------------------------------------------------
+    # Document style helpers (mirrors module1_protected_areas.report_generator)
+    # -----------------------------------------------------------------------
+    def _heading(text: str, level: int = 1):
+        p = doc.add_heading(text, level=level)
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        return p
+
+    def _add_table(df: pd.DataFrame):
+        cols = list(df.columns)
+        t = doc.add_table(rows=1 + len(df), cols=len(cols))
+        t.style = 'Light List Accent 3'
+        for j, col in enumerate(cols):
+            cell = t.rows[0].cells[j]
+            cell.text = str(col)
+            run = cell.paragraphs[0].runs[0]
+            run.bold = True
+        for pos, (_, row) in enumerate(df.iterrows()):
+            tr = t.rows[pos + 1]
+            for j, val in enumerate(row):
+                tr.cells[j].text = str(val) if val is not None else ''
+        return t
+
+    def _add_image_bytes(img_bytes: bytes, width_inches: float = 6.0):
+        buf = io.BytesIO(img_bytes)
+        doc.add_picture(buf, width=Inches(width_inches))
+
+    def _kv_table(rows: list):
+        t = doc.add_table(rows=len(rows), cols=2)
+        t.style = 'Light Shading'
+        for i, (k, v) in enumerate(rows):
+            t.rows[i].cells[0].text = k
+            t.rows[i].cells[1].text = v
+            t.rows[i].cells[0].paragraphs[0].runs[0].bold = True
+
+    # -----------------------------------------------------------------------
     # Title page
-    # =========================================================================
-    story.append(Paragraph("OECM Favourability Analysis Report", styles['Title']))
-    story.append(Spacer(1, 0.5 * cm))
+    # -----------------------------------------------------------------------
+    title = doc.add_heading('⑤ OECM Favourability Analysis', 0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    timestamp = parameters.get('timestamp', 'Not recorded')
-    method = parameters.get('method', 'Not specified')
-    alpha = parameters.get('alpha', 'N/A')
-    metadata_text = f"""
-    <b>Analysis Date:</b> {timestamp}<br/>
-    <b>Aggregation Method:</b> {method}<br/>
-    <b>Alpha Parameter:</b> {alpha}<br/>
-    <b>Specifications Version:</b> {parameters.get('spec_version', 'v0.1')}
-    """
-    story.append(Paragraph(metadata_text, styles['Normal']))
-    story.append(Spacer(1, 0.8 * cm))
+    date_p = doc.add_paragraph(f'Generated: {datetime.now().strftime("%d %B %Y at %H:%M")}')
+    date_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    date_p.runs[0].font.color.rgb = RGBColor(0x80, 0x80, 0x80)
 
-    # =========================================================================
-    # Section: Favourability map (WITH legend / colorbar / scale bar)
-    # =========================================================================
-    story.append(Paragraph("Favourability Map", styles['Heading1']))
-    map_fig = _raster_map_figure(
-        score_array, profile,
-        title="OECM Favourability Score",
-        cmap_name='RdYlGn', vmin=0.0, vmax=1.0,
-        cbar_label="Favourability score (0 = unfavourable, 1 = highly favourable)",
-        pa_gdf=pa_gdf,
-    )
-    story.append(_fig_to_rl_image(map_fig))
-    if pa_gdf is not None and len(pa_gdf) > 0:
-        story.append(Paragraph(
-            "Grey outlines: existing WDPA protected-area network.",
-            styles['Italic']
-        ))
-    story.append(Spacer(1, 0.5 * cm))
+    doc.add_paragraph()
+
+    _heading('Executive Summary', level=1)
+    kv_rows = [
+        ('Aggregation method', str(parameters.get('method', 'Not specified'))),
+        ('Alpha (OWA)', str(parameters.get('alpha', 'N/A'))),
+        ('Specifications version', str(parameters.get('spec_version', 'v0.1'))),
+        ('Report generated', datetime.now().strftime('%Y-%m-%d %H:%M')),
+    ]
+    _kv_table(kv_rows)
+    doc.add_paragraph()
+
+    # -----------------------------------------------------------------------
+    # Section 1: Favourability Map
+    # -----------------------------------------------------------------------
+    doc.add_page_break()
+    _heading('1. Favourability Map', level=1)
+
+    try:
+        map_fig = _raster_map_figure(
+            score_array, profile,
+            title="OECM Favourability Score",
+            cmap_name='RdYlGn', vmin=0.0, vmax=1.0,
+            cbar_label="Favourability score (0 = unfavourable, 1 = highly favourable)",
+            pa_gdf=pa_gdf,
+        )
+        _add_image_bytes(_fig_to_bytes(map_fig), width_inches=6.0)
+        if pa_gdf is not None and len(pa_gdf) > 0:
+            note = doc.add_paragraph('Grey outlines: existing WDPA protected-area network.')
+            note.runs[0].italic = True
+    except Exception as e:
+        doc.add_paragraph(f'[Map unavailable: {e}]')
 
     if stats_df is not None and len(stats_df) > 0:
-        story.append(Paragraph("Summary Statistics", styles['Heading2']))
-        table_data = [stats_df.columns.tolist()] + stats_df.values.tolist()
-        table = Table(table_data)
-        table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black)
-        ]))
-        story.append(table)
+        _heading('1.1 Summary Statistics', level=2)
+        try:
+            _add_table(stats_df)
+        except Exception as e:
+            doc.add_paragraph(f'[Table unavailable: {e}]')
+    doc.add_paragraph()
 
-    # =========================================================================
-    # Section: Score distribution + per-criterion contribution
-    # =========================================================================
-    story.append(PageBreak())
-    story.append(Paragraph("Score Distribution & Criterion Weights", styles['Heading1']))
+    # -----------------------------------------------------------------------
+    # Section 2: Score Distribution & Criterion Weights
+    # -----------------------------------------------------------------------
+    doc.add_page_break()
+    _heading('2. Score Distribution & Criterion Weights', level=1)
 
     valid_scores = score_array[~np.isnan(score_array)]
     if len(valid_scores) > 0:
-        story.append(_fig_to_rl_image(
-            _histogram_figure(valid_scores, display_threshold), width_cm=15
-        ))
+        _heading('2.1 Score Distribution', level=2)
+        try:
+            fig_hist = _histogram_figure(valid_scores, display_threshold)
+            _add_image_bytes(_fig_to_bytes(fig_hist), width_inches=6.0)
+        except Exception as e:
+            doc.add_paragraph(f'[Chart unavailable: {e}]')
+
         dist_stats = pd.DataFrame([
             {'Metric': 'Mean', 'Value': f"{np.mean(valid_scores):.3f}"},
             {'Metric': 'Median', 'Value': f"{np.median(valid_scores):.3f}"},
@@ -538,148 +533,195 @@ def generate_pdf_report(
             {'Metric': '% eligible ≥ 0.5', 'Value': f"{(valid_scores >= 0.5).mean()*100:.1f}%"},
             {'Metric': '% eligible ≥ 0.7', 'Value': f"{(valid_scores >= 0.7).mean()*100:.1f}%"},
         ])
-        story.append(_df_to_rl_table(dist_stats, styles, col_widths=[8 * cm, 8 * cm]))
-        story.append(Spacer(1, 0.5 * cm))
+        _add_table(dist_stats)
+        doc.add_paragraph()
 
     if weights_df is not None and len(weights_df) > 0:
-        story.append(_fig_to_rl_image(_weights_bar_figure(weights_df), width_cm=15))
-        story.append(Paragraph(
-            "Effective weight = intra-group weight × inter-group weight.",
-            styles['Italic']
-        ))
+        _heading('2.2 Per-Criterion Contribution', level=2)
+        try:
+            fig_w = _weights_bar_figure(weights_df)
+            _add_image_bytes(_fig_to_bytes(fig_w), width_inches=6.0)
+            note = doc.add_paragraph('Effective weight = intra-group weight x inter-group weight.')
+            note.runs[0].italic = True
+        except Exception as e:
+            doc.add_paragraph(f'[Chart unavailable: {e}]')
 
-    # =========================================================================
-    # Section: Weight Sensitivity Analysis (optional)
-    # =========================================================================
+    # -----------------------------------------------------------------------
+    # Section 3: Weight Sensitivity Analysis (optional)
+    # -----------------------------------------------------------------------
     if sensitivity_stability is not None:
-        story.append(PageBreak())
-        story.append(Paragraph("Weight Sensitivity Analysis", styles['Heading1']))
-        story.append(Paragraph(
-            "Monte Carlo analysis: the MCE was re-run with weights randomly "
-            "perturbed around the chosen values (Dirichlet distribution). "
-            "The stability map shows how often each pixel exceeds the display "
-            "threshold — values close to 1.0 are robust to weight uncertainty.",
-            styles['Normal']
-        ))
-        story.append(Spacer(1, 0.3 * cm))
-        story.append(_fig_to_rl_image(_raster_map_figure(
-            sensitivity_stability, profile,
-            title="Stability Map",
-            cmap_name='RdYlGn', vmin=0.0, vmax=1.0,
-            cbar_label="Stability (fraction of runs ≥ threshold)",
-        )))
+        doc.add_page_break()
+        _heading('3. Weight Sensitivity Analysis', level=1)
+        doc.add_paragraph(
+            'Monte Carlo analysis: the MCE was re-run with weights randomly '
+            'perturbed around the chosen values (Dirichlet distribution). '
+            'The stability map shows how often each pixel exceeds the display '
+            'threshold — values close to 1.0 are robust to weight uncertainty.'
+        )
+
+        _heading('3.1 Stability Map', level=2)
+        try:
+            fig_stab = _raster_map_figure(
+                sensitivity_stability, profile,
+                title="Stability Map",
+                cmap_name='RdYlGn', vmin=0.0, vmax=1.0,
+                cbar_label="Stability (fraction of runs ≥ threshold)",
+            )
+            _add_image_bytes(_fig_to_bytes(fig_stab), width_inches=6.0)
+        except Exception as e:
+            doc.add_paragraph(f'[Map unavailable: {e}]')
+
         stab_valid = sensitivity_stability[~np.isnan(sensitivity_stability)]
         if len(stab_valid) > 0:
+            _heading('3.2 Stability Summary', level=2)
             sens_stats = pd.DataFrame([
                 {'Metric': 'Highly stable (≥80%)', 'Value': f"{(stab_valid >= 0.8).mean()*100:.1f}% of pixels"},
                 {'Metric': 'Ambiguous (40-60%)', 'Value': f"{((stab_valid >= 0.4) & (stab_valid < 0.6)).mean()*100:.1f}% of pixels"},
                 {'Metric': 'Unstable (<20%)', 'Value': f"{(stab_valid < 0.2).mean()*100:.1f}% of pixels"},
             ])
-            story.append(_df_to_rl_table(sens_stats, styles, col_widths=[8 * cm, 8 * cm]))
+            _add_table(sens_stats)
 
-    # =========================================================================
-    # Section: Candidate OECM Sites (optional)
-    # =========================================================================
+    # -----------------------------------------------------------------------
+    # Section 4: Candidate OECM Sites (optional)
+    # -----------------------------------------------------------------------
     if candidate_sites is not None and len(candidate_sites) > 0:
-        story.append(PageBreak())
-        story.append(Paragraph("Candidate OECM Sites", styles['Heading1']))
-        story.append(Paragraph(
-            "Spatially contiguous patches above the score threshold, filtered by "
-            "Minimum Mapping Unit and ranked by a composite of mean score, gap "
-            "overlap, patch area and proximity to existing PAs.",
-            styles['Normal']
-        ))
-        story.append(Spacer(1, 0.3 * cm))
-        story.append(_fig_to_rl_image(
-            _sites_map_figure(candidate_sites, "Candidate OECM Sites — Mean Score")
-        ))
-        disp = candidate_sites[[
-            'patch_id', 'area_ha', 'mean_score', 'max_score',
-            'compactness', 'dist_to_pa_km', 'gap_overlap_pct', 'rank_score'
-        ]].copy()
-        disp.columns = ['Rank', 'Area (ha)', 'Mean', 'Max', 'Compact.', 'PA dist (km)', 'Gap (%)', 'Rank score']
-        for c in disp.columns[1:]:
-            disp[c] = disp[c].map(lambda v: f"{v:.2f}")
-        story.append(_df_to_rl_table(disp, styles))
+        doc.add_page_break()
+        _heading('4. Candidate OECM Sites', level=1)
+        doc.add_paragraph(
+            'Spatially contiguous patches above the score threshold, filtered by '
+            'Minimum Mapping Unit and ranked by a composite of mean score, gap '
+            'overlap, patch area and proximity to existing PAs.'
+        )
 
-    # =========================================================================
-    # Section: Imported & Evaluated Sites (optional)
-    # =========================================================================
+        _heading('4.1 Site Map', level=2)
+        try:
+            fig_sites = _sites_map_figure(candidate_sites, "Candidate OECM Sites — Mean Score")
+            _add_image_bytes(_fig_to_bytes(fig_sites), width_inches=6.0)
+        except Exception as e:
+            doc.add_paragraph(f'[Map unavailable: {e}]')
+
+        _heading('4.2 Ranked Sites', level=2)
+        try:
+            disp = candidate_sites[[
+                'patch_id', 'area_ha', 'mean_score', 'max_score',
+                'compactness', 'dist_to_pa_km', 'gap_overlap_pct', 'rank_score'
+            ]].copy()
+            disp.columns = ['Rank', 'Area (ha)', 'Mean', 'Max', 'Compact.', 'PA dist (km)', 'Gap (%)', 'Rank score']
+            for c in disp.columns[1:]:
+                disp[c] = disp[c].map(lambda v: f"{v:.2f}")
+            _add_table(disp)
+        except Exception as e:
+            doc.add_paragraph(f'[Table unavailable: {e}]')
+
+    # -----------------------------------------------------------------------
+    # Section 5: Imported & Evaluated Sites (optional)
+    # -----------------------------------------------------------------------
     if imported_sites is not None and len(imported_sites) > 0:
-        story.append(PageBreak())
-        story.append(Paragraph("Imported & Evaluated Candidate Sites", styles['Heading1']))
-        story.append(Paragraph(
-            "Externally-proposed site polygons evaluated against the same MCE "
-            "favourability score and ranking formula as the auto-delineated sites above.",
-            styles['Normal']
-        ))
-        story.append(Spacer(1, 0.3 * cm))
-        story.append(_fig_to_rl_image(
-            _sites_map_figure(imported_sites, "Imported Sites — Mean Score")
-        ))
-        disp_i = imported_sites[[
-            'site_name', 'area_ha', 'mean_score', 'pct_eliminated',
-            'pct_oecm_favourable', 'compactness', 'dist_to_pa_km',
-            'gap_overlap_pct', 'rank_score'
-        ]].copy()
-        disp_i.columns = ['Site', 'Area (ha)', 'Mean', '% Elim.', '% OECM',
-                           'Compact.', 'PA dist (km)', 'Gap (%)', 'Rank score']
-        for c in disp_i.columns[1:]:
-            disp_i[c] = disp_i[c].map(lambda v: f"{v:.2f}")
-        story.append(_df_to_rl_table(disp_i, styles))
+        doc.add_page_break()
+        _heading('5. Imported & Evaluated Candidate Sites', level=1)
+        doc.add_paragraph(
+            'Externally-proposed site polygons evaluated against the same MCE '
+            'favourability score and ranking formula as the auto-delineated sites above.'
+        )
 
-    # =========================================================================
-    # Section: Scenario Comparison (optional)
-    # =========================================================================
+        _heading('5.1 Site Map', level=2)
+        try:
+            fig_imp = _sites_map_figure(imported_sites, "Imported Sites — Mean Score")
+            _add_image_bytes(_fig_to_bytes(fig_imp), width_inches=6.0)
+        except Exception as e:
+            doc.add_paragraph(f'[Map unavailable: {e}]')
+
+        _heading('5.2 Evaluation Results', level=2)
+        try:
+            disp_i = imported_sites[[
+                'site_name', 'area_ha', 'mean_score', 'pct_eliminated',
+                'pct_oecm_favourable', 'compactness', 'dist_to_pa_km',
+                'gap_overlap_pct', 'rank_score'
+            ]].copy()
+            disp_i.columns = ['Site', 'Area (ha)', 'Mean', '% Elim.', '% OECM',
+                               'Compact.', 'PA dist (km)', 'Gap (%)', 'Rank score']
+            for c in disp_i.columns[1:]:
+                disp_i[c] = disp_i[c].map(lambda v: f"{v:.2f}")
+            _add_table(disp_i)
+        except Exception as e:
+            doc.add_paragraph(f'[Table unavailable: {e}]')
+
+    # -----------------------------------------------------------------------
+    # Section 6: Scenario Comparison (optional)
+    # -----------------------------------------------------------------------
     if scenario_scores is not None and scenario_profile is not None:
-        story.append(PageBreak())
-        story.append(Paragraph("Scenario Comparison", styles['Heading1']))
-        story.append(Paragraph(
-            "Favourability recomputed under three preset inter-group weight "
-            "trade-offs (Biodiversity priority, Services priority, Compromise), "
-            "all other settings held fixed.",
-            styles['Normal']
-        ))
-        story.append(Spacer(1, 0.3 * cm))
+        doc.add_page_break()
+        _heading('6. Scenario Comparison', level=1)
+        doc.add_paragraph(
+            'Favourability recomputed under three preset inter-group weight '
+            'trade-offs (Biodiversity priority, Services priority, Compromise), '
+            'all other settings held fixed.'
+        )
 
-        pixel_area_ha_sc = abs(scenario_profile['transform'][0] * scenario_profile['transform'][4]) / 10_000.0
-        summary_rows = []
-        for name, arr in scenario_scores.items():
-            valid = arr[~np.isnan(arr)]
-            summary_rows.append({
-                'Scenario': name,
-                'Eligible (ha)': f"{len(valid) * pixel_area_ha_sc:,.0f}",
-                'Mean score': f"{np.mean(valid):.3f}" if len(valid) else "N/A",
-                'Area ≥0.5 (ha)': f"{int((valid >= 0.5).sum()) * pixel_area_ha_sc:,.0f}",
-            })
-        story.append(_df_to_rl_table(pd.DataFrame(summary_rows), styles))
-        story.append(Spacer(1, 0.5 * cm))
+        _heading('6.1 Summary by Scenario', level=2)
+        try:
+            pixel_area_ha_sc = abs(scenario_profile['transform'][0] * scenario_profile['transform'][4]) / 10_000.0
+            summary_rows = []
+            for name, arr in scenario_scores.items():
+                valid = arr[~np.isnan(arr)]
+                summary_rows.append({
+                    'Scenario': name,
+                    'Eligible (ha)': f"{len(valid) * pixel_area_ha_sc:,.0f}",
+                    'Mean score': f"{np.mean(valid):.3f}" if len(valid) else "N/A",
+                    'Area >=0.5 (ha)': f"{int((valid >= 0.5).sum()) * pixel_area_ha_sc:,.0f}",
+                })
+            _add_table(pd.DataFrame(summary_rows))
+        except Exception as e:
+            doc.add_paragraph(f'[Table unavailable: {e}]')
 
-        agreement = np.zeros_like(next(iter(scenario_scores.values())), dtype=np.int8)
-        any_valid = np.zeros_like(agreement, dtype=bool)
-        for arr in scenario_scores.values():
-            vm = ~np.isnan(arr)
-            any_valid |= vm
-            agreement += ((arr >= 0.5) & vm).astype(np.int8)
-        agreement_f = agreement.astype(np.float32)
-        agreement_f[~any_valid] = np.nan
+        _heading('6.2 Scenario Agreement Map', level=2)
+        try:
+            agreement = np.zeros_like(next(iter(scenario_scores.values())), dtype=np.int8)
+            any_valid = np.zeros_like(agreement, dtype=bool)
+            for arr in scenario_scores.values():
+                vm = ~np.isnan(arr)
+                any_valid |= vm
+                agreement += ((arr >= 0.5) & vm).astype(np.int8)
+            agreement_f = agreement.astype(np.float32)
+            agreement_f[~any_valid] = np.nan
 
-        story.append(_fig_to_rl_image(_raster_map_figure(
-            agreement_f, scenario_profile,
-            title="Scenario Agreement (pixels scoring ≥0.5 under N scenarios)",
-            cmap_name='YlGn', vmin=0, vmax=len(scenario_scores),
-            cbar_label="Scenarios agreeing",
-            cbar_ticks=list(range(len(scenario_scores) + 1)),
-        )))
+            fig_agree = _raster_map_figure(
+                agreement_f, scenario_profile,
+                title="Scenario Agreement (pixels scoring ≥0.5 under N scenarios)",
+                cmap_name='YlGn', vmin=0, vmax=len(scenario_scores),
+                cbar_label="Scenarios agreeing",
+                cbar_ticks=list(range(len(scenario_scores) + 1)),
+            )
+            _add_image_bytes(_fig_to_bytes(fig_agree), width_inches=6.0)
+        except Exception as e:
+            doc.add_paragraph(f'[Map unavailable: {e}]')
 
-    # =========================================================================
-    # Section: Full parameter log
-    # =========================================================================
-    story.append(PageBreak())
-    story.append(Paragraph("Full Parameter Configuration", styles['Heading1']))
-    story.append(Spacer(1, 0.3 * cm))
-    param_text = "<br/>".join([f"<b>{k}:</b> {v}" for k, v in parameters.items()])
-    story.append(Paragraph(param_text, styles['Normal']))
+    # -----------------------------------------------------------------------
+    # Section 7: Full Parameter Configuration
+    # -----------------------------------------------------------------------
+    doc.add_page_break()
+    _heading('7. Full Parameter Configuration', level=1)
+    param_rows = [(str(k), str(v)) for k, v in parameters.items()]
+    _kv_table(param_rows)
 
-    doc.build(story)
-    logger.info(f"PDF report generated successfully: {output_path}")
+    # -----------------------------------------------------------------------
+    # Footer
+    # -----------------------------------------------------------------------
+    doc.add_page_break()
+    footer = doc.add_paragraph(
+        'OECM Favourability Tool — ⑤ OECM Favourability Analysis Report\n'
+        f'Generated {datetime.now().strftime("%Y-%m-%d %H:%M")} | '
+        f'Specification: {parameters.get("spec_version", "v0.1")}'
+    )
+    footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    footer.runs[0].font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+    footer.runs[0].font.size = Pt(9)
+
+    # -----------------------------------------------------------------------
+    # Serialise to bytes
+    # -----------------------------------------------------------------------
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    logger.info("DOCX report generated successfully")
+    return buf.read()

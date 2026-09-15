@@ -13,7 +13,7 @@ import geopandas as gpd
 import pandas as pd
 import rasterio
 from pathlib import Path
-from shapely.geometry import Polygon, box
+from shapely.geometry import box
 from unittest.mock import patch, MagicMock
 import tempfile
 import os
@@ -33,7 +33,6 @@ from modules.module1_protected_areas import (
 from modules.module2_favourability import (
     raster_preprocessing,
     mce_engine,
-    criteria_manager,
     export
 )
 
@@ -777,8 +776,8 @@ def test_full_e2e_pipeline(
 
     # All steps completed successfully
     print("\n=== END-TO-END INTEGRATION TEST PASSED ===")
-    print(f"✓ Step 1: NUTS2 loader (mocked)")
-    print(f"✓ Step 2: WDPA loader (synthetic)")
+    print("✓ Step 1: NUTS2 loader (mocked)")
+    print("✓ Step 2: WDPA loader (synthetic)")
     print(f"✓ Step 3: Coverage stats — {len(coverage)} classes")
     print(f"✓ Step 4: Representativity — proposed weights sum to {sum(proposed_weights.values()):.6f}")
     print(f"✓ Step 5: Gap analysis — exported to {len(gap_paths)} file(s)")

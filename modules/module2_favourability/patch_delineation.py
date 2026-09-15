@@ -25,8 +25,7 @@ import numpy as np
 import geopandas as gpd
 import pandas as pd
 from rasterio.features import shapes as _rasterio_shapes
-from rasterio.transform import from_bounds as _from_bounds
-from shapely.geometry import shape as _shape, MultiPolygon, Polygon
+from shapely.geometry import shape as _shape
 from shapely.ops import unary_union
 from scipy.ndimage import label as _ndlabel
 
@@ -229,7 +228,6 @@ def delineate_patches(
 
     # Zero-out small patches for vectorisation
     keep_mask = np.isin(labelled, keep_ids)
-    filtered_binary = np.where(keep_mask, binary, 0).astype(np.uint8)
     filtered_labels = np.where(keep_mask, labelled, 0).astype(np.int32)
 
     logger.info(
@@ -447,8 +445,6 @@ def evaluate_external_sites(
             gap_union = strict_gaps_gdf.geometry.union_all()
         except Exception as e:
             logger.warning(f"Could not compute gap union: {e}")
-
-    pixel_area_ha = abs(transform[0] * transform[4]) / 10_000.0
 
     records = []
     for i, row in sites_gdf.reset_index(drop=True).iterrows():

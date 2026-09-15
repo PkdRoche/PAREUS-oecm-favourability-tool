@@ -615,13 +615,13 @@ def render_parameters_tab():
         # Section 6c: Sensitivity Analysis Settings
         # -------------------------------------------------------------
         with st.expander("6c. Sensitivity Analysis Settings"):
-            sensitivity_runs = st.slider(
+            st.slider(
                 "Monte Carlo runs",
                 min_value=50, max_value=500, value=200, step=50,
                 key='sensitivity_runs',
                 help="More runs = more stable estimate but slower computation."
             )
-            sensitivity_concentration = st.slider(
+            st.slider(
                 "Weight uncertainty (concentration)",
                 min_value=5, max_value=100, value=20, step=5,
                 key='sensitivity_concentration',
@@ -630,7 +630,7 @@ def render_parameters_tab():
                     "5 = high uncertainty, 100 = low uncertainty."
                 )
             )
-            sensitivity_perturb_intra = st.toggle(
+            st.toggle(
                 "Also perturb intra-group weights",
                 value=True,
                 key='sensitivity_perturb_intra',
@@ -641,7 +641,7 @@ def render_parameters_tab():
         # Section 6d: Patch Delineation Settings
         # -------------------------------------------------------------
         with st.expander("6d. Candidate Site Delineation"):
-            mmu_ha = st.slider(
+            st.slider(
                 "Minimum Mapping Unit (ha)",
                 min_value=10, max_value=5000, value=100, step=10,
                 key='mmu_ha',

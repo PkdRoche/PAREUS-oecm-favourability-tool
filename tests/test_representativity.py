@@ -3,7 +3,7 @@
 import pytest
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import box, Polygon
+from shapely.geometry import box
 import sys
 from pathlib import Path
 

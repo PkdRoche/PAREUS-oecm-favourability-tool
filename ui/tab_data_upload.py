@@ -4,7 +4,6 @@ import tempfile
 import configparser
 from pathlib import Path
 import logging
-import numpy as np
 import subprocess
 import sys
 
@@ -363,7 +362,7 @@ def render():
     Render data upload interface with validation summary.
 
     All uploaded files are stored in session state for consumption by
-    Module 1 and Module 2 analysis tabs. No analytical code is executed here.
+    the ④ and ⑤ analysis tabs. No analytical code is executed here.
 
     Session state keys set:
     -----------------------
@@ -395,8 +394,9 @@ def render():
     # ===================================================================
     st.subheader("Output Folder")
     st.caption(
-        "Optional. When set, every export button across the app (Module 1 "
-        "and Module 2) also saves a copy directly to this folder — no need "
+        "Optional. When set, every export button across the app (④ Protection "
+        "Network Diagnostic and ⑤ OECM Favourability Analysis) also saves a "
+        "copy directly to this folder — no need "
         "to pick a save location in the browser each time. The project "
         "(.ini) file below also defaults to being saved here."
     )
@@ -651,7 +651,7 @@ def render():
     st.markdown("---")
 
     # ===================================================================
-    # WDPA section (for Module 1)
+    # WDPA section (for ④ Protection Network Diagnostic)
     # ===================================================================
     st.subheader("Protected Areas Network (WDPA)")
 
@@ -748,7 +748,7 @@ def render():
     st.markdown("---")
 
     # ===================================================================
-    # Criterion rasters (for Module 2)
+    # Criterion rasters (for ⑤ OECM Favourability Analysis)
     # ===================================================================
     st.subheader("Multi-Criteria Evaluation Layers")
     if _IS_LOCAL:
@@ -1021,25 +1021,27 @@ def render():
         if data_ready_module1 and data_ready_module2:
             st.success(
                 "All required layers uploaded successfully! "
-                "You may now proceed to Module 1 and Module 2 analysis tabs."
+                "You may now proceed to the **④ Protection Network Diagnostic** and "
+                "**⑤ OECM Favourability Analysis** tabs."
             )
             st.session_state['data_ready'] = True
         elif data_ready_module1 and not data_ready_module2:
             st.info(
-                "WDPA layer uploaded — Module 1 (Protection Network Diagnostic) is ready. "
-                f"Upload {len(missing_rasters)} remaining raster(s) to enable Module 2."
+                "WDPA layer uploaded — **④ Protection Network Diagnostic** is ready. "
+                f"Upload {len(missing_rasters)} remaining raster(s) to enable **⑤ OECM Favourability Analysis**."
             )
             st.session_state['data_ready'] = False
         elif not data_ready_module1 and data_ready_module2:
             st.info(
-                "All MCE rasters uploaded — Module 2 (OECM Favourability) is ready. "
-                "Upload WDPA layer to enable Module 1."
+                "All MCE rasters uploaded — **⑤ OECM Favourability Analysis** is ready. "
+                "Upload WDPA layer to enable **④ Protection Network Diagnostic**."
             )
             st.session_state['data_ready'] = False
         else:
             st.warning(
                 "Upload all required layers to proceed. "
-                "At minimum, upload WDPA for Module 1 or all 6 rasters for Module 2."
+                "At minimum, upload WDPA for **④ Protection Network Diagnostic** or "
+                "all 6 rasters for **⑤ OECM Favourability Analysis**."
             )
             st.session_state['data_ready'] = False
 

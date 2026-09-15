@@ -1,6 +1,5 @@
 """Streamlit UI for Module 1 — Protection Network Diagnostic."""
 import streamlit as st
-import numpy as np
 import pandas as pd
 import geopandas as gpd
 import folium
@@ -57,7 +56,7 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
     ecosystem_layer : gpd.GeoDataFrame, optional
         Ecosystem types layer for representativity analysis.
     """
-    st.header("Module 1 — Protected Area Network Diagnostic")
+    st.header("④ Protection Network Diagnostic")
 
     # ===================================================================
     # Load WDPA and run analysis if not already done
@@ -219,8 +218,6 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
     # across fragment reruns once it's already in EPSG:3035 (see the CRS
     # guard above), so this avoids re-reprojecting on every interaction
     # inside this tab (Run Gap Analysis, Compute Ecosystem RI, etc.).
-    import geopandas as gpd
-    from shapely.geometry import mapping
     _pa_cache_key = id(pa_gdf)
     _pa_cache = st.session_state.get('_pa_gdf_4326_cache')
     if _pa_cache is not None and _pa_cache.get('key') == _pa_cache_key:
@@ -399,7 +396,6 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
                 '% Territory': f"{total_pa_area_ha / territory_area_ha * 100:.2f}%",
                 'Sites': len(pa_gdf)
             })
-            import pandas as pd
             st.dataframe(pd.DataFrame(iucn_rows), hide_index=True, width='stretch')
 
     with col_right:
@@ -725,7 +721,7 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
         if raster_paths is None or len(raster_paths) == 0:
             st.info(
                 "Raster paths for MCE criteria not yet available. "
-                "Run Module 2 analysis first to enable criterion profiling within PAs."
+                "Run the ⑤ OECM Favourability Analysis first to enable criterion profiling within PAs."
             )
         else:
             # Import zonal stats functions
@@ -1123,7 +1119,7 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
 
     with col_exp2:
         if 'ri_df' in st.session_state and st.session_state['ri_df'] is not None:
-            if st.button("Apply Weight Suggestions to Module 2 →"):
+            if st.button("Apply Weight Suggestions to ⑤ Favourability Analysis →"):
                 # Propose Group A weights from representativity deficits
                 try:
                     ri_df = st.session_state['ri_df']
@@ -1152,7 +1148,7 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
 
                     st.success(
                         "Weight suggestions validated and applied! "
-                        "Go to **② Parameters** Section 7 to apply them to Module 2."
+                        "Go to **② Parameters** Section 7 to apply them to ⑤ OECM Favourability Analysis."
                     )
 
                 except ValueError as e:

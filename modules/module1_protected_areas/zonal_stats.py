@@ -7,7 +7,6 @@ import pandas as pd
 import geopandas as gpd
 import rasterio
 from rasterio.mask import mask
-from rasterio.warp import reproject, Resampling, calculate_default_transform
 from shapely.geometry import mapping, box
 from shapely.ops import unary_union
 

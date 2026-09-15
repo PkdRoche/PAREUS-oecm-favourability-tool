@@ -16,17 +16,14 @@ from __future__ import annotations
 import io
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 import matplotlib
 matplotlib.use('Agg')   # non-interactive backend
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-from shapely.geometry import box
 
 logger = logging.getLogger(__name__)
 
@@ -202,7 +199,7 @@ def _ri_bar_figure(ri_df: pd.DataFrame, figsize: tuple = (10, 5)) -> plt.Figure:
     colours = ['#1D9E75' if v >= 30 else '#F6A623' for v in df['coverage_pct']]
 
     fig, ax = plt.subplots(figsize=figsize)
-    bars = ax.barh(df['ecosystem_type'], df['coverage_pct'], color=colours, alpha=0.85)
+    ax.barh(df['ecosystem_type'], df['coverage_pct'], color=colours, alpha=0.85)
     ax.axvline(30, color='red', linewidth=1.2, linestyle='--', label='30% KMGBF target')
     ax.set_xlabel('Coverage (%)')
     ax.set_title('Ecosystem Representativity', fontweight='bold')
@@ -253,9 +250,6 @@ def generate_docx_report(
         from docx import Document
         from docx.shared import Inches, Pt, RGBColor
         from docx.enum.text import WD_ALIGN_PARAGRAPH
-        from docx.enum.table import WD_TABLE_ALIGNMENT
-        from docx.oxml.ns import qn
-        from docx.oxml import OxmlElement
     except ImportError as e:
         raise ImportError(
             "python-docx is required for DOCX export. "
@@ -308,7 +302,7 @@ def generate_docx_report(
     # -----------------------------------------------------------------------
     # Title page
     # -----------------------------------------------------------------------
-    title = doc.add_heading('Module 1 — Protection Network Diagnostic', 0)
+    title = doc.add_heading('④ Protection Network Diagnostic', 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     subtitle = doc.add_paragraph(f'Territory: {territory_name}')
@@ -533,7 +527,7 @@ def generate_docx_report(
     # -----------------------------------------------------------------------
     doc.add_page_break()
     footer = doc.add_paragraph(
-        'OECM Favourability Tool — Module 1 Diagnostic Report\n'
+        'OECM Favourability Tool — ④ Protection Network Diagnostic Report\n'
         f'Generated {datetime.now().strftime("%Y-%m-%d %H:%M")} | '
         'Specification: CBD COP14 decision 14/8'
     )

@@ -12,7 +12,6 @@ from rasterio.warp import reproject, Resampling
 from rasterio.transform import from_bounds
 import yaml
 from pathlib import Path
-from typing import Optional
 import shapely.geometry
 
 logger = logging.getLogger(__name__)

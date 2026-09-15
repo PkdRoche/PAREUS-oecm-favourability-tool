@@ -3,11 +3,12 @@ import logging
 import streamlit as st
 import numpy as np
 import pandas as pd
+import geopandas as gpd
 import folium
 from streamlit_folium import st_folium
 import tempfile
+import zipfile
 from pathlib import Path
-import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from PIL import Image
 import io
@@ -318,7 +319,6 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
             # Study-area boundary
             study_area_geom = st.session_state.get('study_area_geometry')
             if study_area_geom is not None:
-                import geopandas as gpd
                 clean_geom = _to_multipolygon(study_area_geom)
                 if clean_geom is not None and not clean_geom.is_empty:
                     _sa_gdf = gpd.GeoDataFrame(
@@ -338,7 +338,6 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                 _pa_gdf_ov = st.session_state.get('pa_gdf')
                 if _pa_gdf_ov is not None and len(_pa_gdf_ov) > 0:
                     try:
-                        import geopandas as _gpd2
                         _ov_colours = {
                             'strict_core': '#1B5E20',
                             'regulatory':  '#388E3C',
@@ -430,7 +429,6 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
 
         if len(valid_scores) > 0:
             n_oecm = int(np.sum(oecm_mask)) if oecm_mask is not None else 0
-            n_classical = int(np.sum(classical_pa_mask)) if classical_pa_mask is not None else 0
 
             # Histogram of ALL eligible pixel scores (not just OECM-favourable)
             hist_counts, bin_edges = np.histogram(valid_scores, bins=20, range=(0, 1))
@@ -474,7 +472,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
             if n_oecm == 0:
                 st.warning(
                     "No pixels classified as OECM-favourable — Group C score "
-                    f"(provisioning ES + compatible land use) is below the minimum "
+                    "(provisioning ES + compatible land use) is below the minimum "
                     "threshold (0.10) for all eligible pixels. "
                     "Check that provisioning_es and land use layers have valid values."
                 )
@@ -831,7 +829,6 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
 
         _score  = st.session_state.get('score_array')
         _prof   = st.session_state.get('raster_profile')
-        _el_msk = st.session_state.get('eliminatory_mask')
 
         if _score is None or _prof is None:
             st.info("Run the MCE analysis first to enable candidate site delineation.")
@@ -908,7 +905,6 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                 # ── Site map ────────────────────────────────────────────
                 st.markdown("#### Site Map")
                 try:
-                    import geopandas as gpd
                     _sites_4326 = _sites.to_crs('EPSG:4326')
                     _centroid   = _sites_4326.geometry.union_all().centroid
                     _m_sites    = folium.Map(
@@ -942,7 +938,6 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                 # ── Shapefile (ZIP) download ──────────────────────────────
                 st.markdown("#### Download Candidate Sites")
                 try:
-                    import tempfile, zipfile
                     from pathlib import Path as _Path
                     with tempfile.TemporaryDirectory() as _tmp:
                         _shp = _Path(_tmp) / "candidate_oecm_sites.shp"
@@ -976,8 +971,8 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
         st.markdown(
             "Upload externally-proposed candidate site polygons and evaluate "
             "them against the same MCE favourability score used elsewhere in "
-            "Module 2 — current weights, aggregation method and eliminatory "
-            "thresholds. Same attributes and ranking formula as the "
+            "⑤ OECM Favourability Analysis — current weights, aggregation method "
+            "and eliminatory thresholds. Same attributes and ranking formula as the "
             "auto-delineated **Candidate Sites** tab, so results are directly "
             "comparable."
         )
@@ -988,8 +983,6 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
         if _score_ie is None or _prof_ie is None:
             st.info("Run the MCE analysis first (Load & Align Rasters above) to enable site evaluation.")
         else:
-            import geopandas as gpd
-
             upload_mode = st.radio(
                 "Upload format",
                 ["ZIP archive", "Individual Shapefile files"],
@@ -1009,7 +1002,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                         key='import_sites_zip'
                     )
                     if zip_file is not None:
-                        import zipfile, tempfile, os
+                        import os
                         _tmp_dir = tempfile.mkdtemp()
                         _zip_path = Path(_tmp_dir) / zip_file.name
                         _zip_path.write_bytes(zip_file.getvalue())
@@ -1028,7 +1021,6 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                         key='import_sites_multi'
                     )
                     if shp_files:
-                        import tempfile
                         _tmp_dir = tempfile.mkdtemp()
                         _shp_name = None
                         for _f in shp_files:
@@ -1154,7 +1146,6 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                 # ── Export ────────────────────────────────────────────────
                 st.markdown("#### Download Evaluation")
                 try:
-                    import tempfile, zipfile
                     from pathlib import Path as _Path
 
                     with tempfile.TemporaryDirectory() as _tmp:
@@ -1383,8 +1374,7 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
             try:
                 with st.spinner("Exporting GeoTIFF..."):
                     # Create temp file, close it immediately so rasterio can open it on Windows
-                    import tempfile as _tf
-                    _tmp = _tf.NamedTemporaryFile(delete=False, suffix='.tif')
+                    _tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.tif')
                     _tmp_path = _tmp.name
                     _tmp.close()
 
@@ -1396,8 +1386,8 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                     with open(_tmp_path, 'rb') as f:
                         geotiff_bytes = f.read()
                     try:
-                        import os as _os
-                        _os.unlink(_tmp_path)
+                        import os
+                        os.unlink(_tmp_path)
                     except Exception:
                         pass
 
@@ -1416,8 +1406,6 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
         if st.button("Export Shapefile (ZIP)"):
             try:
                 with st.spinner("Exporting shapefile..."):
-                    import zipfile
-
                     # Create temporary directory for shapefile components
                     with tempfile.TemporaryDirectory() as tmpdir:
                         shp_path = Path(tmpdir) / "favourable_zones.shp"
@@ -1510,17 +1498,17 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                 st.error(f"CSV export failed: {str(e)}")
 
     with col_exp4:
-        if st.button("Generate PDF Report"):
+        if st.button("Generate DOCX Report"):
             try:
-                with st.spinner("Generating comprehensive PDF report..."):
+                with st.spinner("Generating comprehensive DOCX report..."):
                     # ── Summary statistics table ────────────────────────────
                     pa_gdf = st.session_state.get('pa_gdf')
-                    wdpa_area_ha_pdf = 0.0
-                    n_pa_sites_pdf = 0
+                    wdpa_area_ha_docx = 0.0
+                    n_pa_sites_docx = 0
                     if pa_gdf is not None:
                         try:
-                            wdpa_area_ha_pdf = float(pa_gdf.geometry.union_all().area) / 10000.0
-                            n_pa_sites_pdf = len(pa_gdf)
+                            wdpa_area_ha_docx = float(pa_gdf.geometry.union_all().area) / 10000.0
+                            n_pa_sites_docx = len(pa_gdf)
                         except Exception:
                             pass
 
@@ -1538,9 +1526,9 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                         {'Metric': 'Median favourability score (eligible pixels)',
                          'Value': f"{median_score:.3f}"},
                         {'Metric': 'Existing WDPA protected area — union (ha)',
-                         'Value': f"{wdpa_area_ha_pdf:.0f}" if wdpa_area_ha_pdf > 0 else 'Not loaded'},
+                         'Value': f"{wdpa_area_ha_docx:.0f}" if wdpa_area_ha_docx > 0 else 'Not loaded'},
                         {'Metric': 'Existing WDPA sites (count)',
-                         'Value': str(n_pa_sites_pdf) if n_pa_sites_pdf > 0 else 'Not loaded'},
+                         'Value': str(n_pa_sites_docx) if n_pa_sites_docx > 0 else 'Not loaded'},
                     ])
 
                     # Add timestamp and spec version to params
@@ -1555,54 +1543,47 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                         }
 
                     # ── Pull in every other analysis actually run this session ──
-                    weights_df_pdf = _criterion_weights_df(params) if params is not None else None
-                    sensitivity_stability_pdf = st.session_state.get('sensitivity_stability')
-                    candidate_sites_pdf = st.session_state.get('candidate_sites')
-                    imported_sites_pdf = st.session_state.get('imported_sites_eval')
+                    weights_df_docx = _criterion_weights_df(params) if params is not None else None
+                    sensitivity_stability_docx = st.session_state.get('sensitivity_stability')
+                    candidate_sites_docx = st.session_state.get('candidate_sites')
+                    imported_sites_docx = st.session_state.get('imported_sites_eval')
 
-                    scenario_scores_pdf = None
-                    scenario_profile_pdf = None
-                    _sc_cache_pdf = st.session_state.get('_scenario_comparison')
-                    if _sc_cache_pdf is not None and _sc_cache_pdf.get('key') == st.session_state.get('_aligned_key'):
-                        scenario_scores_pdf = _sc_cache_pdf['scores']
-                        scenario_profile_pdf = st.session_state.get('_aligned_profile')
+                    scenario_scores_docx = None
+                    scenario_profile_docx = None
+                    _sc_cache_docx = st.session_state.get('_scenario_comparison')
+                    if _sc_cache_docx is not None and _sc_cache_docx.get('key') == st.session_state.get('_aligned_key'):
+                        scenario_scores_docx = _sc_cache_docx['scores']
+                        scenario_profile_docx = st.session_state.get('_aligned_profile')
 
-                    # Generate PDF
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_pdf:
-                        export_module.generate_pdf_report(
-                            output_path=tmp_pdf.name,
-                            parameters=params_full,
-                            score_array=score_array,
-                            profile=profile,
-                            stats_df=stats_df,
-                            display_threshold=st.session_state.get('export_threshold', 0.5),
-                            oecm_mask=oecm_mask,
-                            pa_gdf=pa_gdf,
-                            weights_df=weights_df_pdf,
-                            sensitivity_stability=sensitivity_stability_pdf,
-                            candidate_sites=candidate_sites_pdf,
-                            imported_sites=imported_sites_pdf,
-                            scenario_scores=scenario_scores_pdf,
-                            scenario_profile=scenario_profile_pdf,
-                        )
+                    docx_bytes = export_module.generate_docx_report(
+                        parameters=params_full,
+                        score_array=score_array,
+                        profile=profile,
+                        stats_df=stats_df,
+                        display_threshold=st.session_state.get('export_threshold', 0.5),
+                        oecm_mask=oecm_mask,
+                        pa_gdf=pa_gdf,
+                        weights_df=weights_df_docx,
+                        sensitivity_stability=sensitivity_stability_docx,
+                        candidate_sites=candidate_sites_docx,
+                        imported_sites=imported_sites_docx,
+                        scenario_scores=scenario_scores_docx,
+                        scenario_profile=scenario_profile_docx,
+                    )
 
-                        # Read PDF for download
-                        with open(tmp_pdf.name, 'rb') as f:
-                            pdf_bytes = f.read()
+                    save_and_download(
+                        label="Download DOCX Report",
+                        data=docx_bytes,
+                        file_name="favourability_report.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
 
-                        save_and_download(
-                            label="Download PDF Report",
-                            data=pdf_bytes,
-                            file_name="favourability_report.pdf",
-                            mime="application/pdf"
-                        )
-
-                        st.success("PDF report ready for download!")
+                    st.success("DOCX report ready for download!")
 
             except ImportError:
-                st.error("PDF generation requires reportlab. Install with: pip install reportlab")
+                st.error("DOCX generation requires python-docx. Install with: pip install python-docx")
             except Exception as e:
-                st.error(f"PDF generation failed: {str(e)}")
+                st.error(f"DOCX generation failed: {str(e)}")
 
     st.markdown("---")
 
@@ -1662,7 +1643,7 @@ def render_module2_tab():
     """
     from ui.sidebar import load_settings
 
-    st.header("Module 2 — OECM Favourability Analysis")
+    st.header("⑤ OECM Favourability Analysis")
 
     parameters = st.session_state.get('parameters', {})
 
@@ -1814,7 +1795,6 @@ def render_module2_tab():
                 _gap_layers_marker = None
                 if gap_bonus_val > 0.0 and 'gap_layers' in st.session_state:
                     try:
-                        import numpy as np
                         from rasterio.features import rasterize as _rasterize
 
                         gap_layers = st.session_state['gap_layers']
@@ -1864,7 +1844,7 @@ def render_module2_tab():
                     _last_marker = st.session_state.get('_gap_layers_marker_used')
                     if _last_marker is not None and _last_marker != _gap_layers_marker:
                         st.info(
-                            "Gap layers were updated in Module 1 since the last computation. "
+                            "Gap layers were updated in ④ Protection Network Diagnostic since the last computation. "
                             "The gap bonus below has already been recalculated using the "
                             "latest gap layers."
                         )
@@ -1874,7 +1854,6 @@ def render_module2_tab():
                 pa_proximity_raster = None
                 if parameters.get('proximity_bonus', 0.0) > 0.0:
                     try:
-                        import numpy as np
                         from scipy.ndimage import distance_transform_edt as _edt
                         from rasterio.features import rasterize as _rasterize2
                         pa_gdf_prox = st.session_state.get('pa_gdf')
@@ -1925,7 +1904,6 @@ def render_module2_tab():
 
                     # ── Optional: mask out pixels inside existing PAs ────────
                     if parameters.get('exclude_pa_pixels') and 'pa_gdf' in st.session_state:
-                        import numpy as np
                         from rasterio.features import rasterize as _rasterize_pa
                         _pa_gdf_ex  = st.session_state['pa_gdf']
                         _ex_classes = parameters.get('exclude_pa_classes', [])
