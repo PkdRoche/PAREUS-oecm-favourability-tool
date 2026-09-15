@@ -25,6 +25,10 @@ env/
 .env
 .env.local
 
+# Optional local corporate CA bundle (see start.ps1) — personal to each
+# machine, never something to version.
+cacert.pem
+
 # Outputs
 outputs/
 
