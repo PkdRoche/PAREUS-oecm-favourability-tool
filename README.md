@@ -77,4 +77,4 @@ Analysis settings (weights, thresholds, aggregation method, file paths, etc.) ca
 
 ## Contact
 
-[Specify contact information]
+Philip Roche, INRAE, philip.roche@inrae.fr
