@@ -868,13 +868,14 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
 
                             if len(class_data) > 0:
                                 row = class_data.iloc[0]
+                                _fmt = lambda v: f"{v:.3f}" if pd.notna(v) else "—"
                                 detailed_stats.append({
                                     'Criterion': criterion,
                                     'IUCN Category': iucn_cat,
-                                    'Min': f"{row['min']:.3f}",
-                                    'Median': f"{row['median']:.3f}",
-                                    'Max': f"{row['max']:.3f}",
-                                    'Std': f"{row['std']:.3f}",
+                                    'Min': _fmt(row['min']),
+                                    'Median': _fmt(row['median']),
+                                    'Max': _fmt(row['max']),
+                                    'Std': _fmt(row['std']),
                                     'Pixel Count': f"{row['pixel_count']:,}"
                                 })
 

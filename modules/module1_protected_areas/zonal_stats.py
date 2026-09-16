@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import rasterio
+from rasterio.crs import CRS as _RioCRS
 from rasterio.mask import mask
 from shapely.geometry import mapping, box
 from shapely.ops import unary_union
@@ -189,9 +190,16 @@ def zonal_stats_by_pa_class(
 
     results = []
 
+    # Collect all IUCN categories up front so we can guarantee every
+    # category present in pa_gdf appears in the output (even if no valid
+    # pixels exist for a given raster).
+    all_iucn_categories = pa_gdf[iucn_col].unique()
+
     # Process each criterion raster
     for criterion_name, raster_path in raster_paths.items():
         logger.info(f"Processing criterion: {criterion_name} ({raster_path})")
+
+        categories_with_data = set()
 
         try:
             with rasterio.open(raster_path) as src:
@@ -207,13 +215,12 @@ def zonal_stats_by_pa_class(
                 # Determine nodata value
                 nodata_value = nodata if nodata is not None else src.nodata
 
-                # Get IUCN categories
-                iucn_categories = pa_gdf[iucn_col].unique()
-
                 # Reproject entire PA GeoDataFrame once (not once per category)
-                if str(raster_crs).upper() != 'EPSG:3035':
-                    logger.warning(
-                        f"Raster CRS ({raster_crs}) differs from EPSG:3035. "
+                _target_crs = _RioCRS.from_user_input(raster_crs)
+                _pa_crs = _RioCRS.from_user_input(pa_gdf.crs)
+                if _target_crs != _pa_crs:
+                    logger.info(
+                        f"Raster CRS ({raster_crs}) differs from PA CRS ({pa_gdf.crs}). "
                         f"Reprojecting PA geometries once for all categories."
                     )
                     pa_gdf_masked = pa_gdf.to_crs(raster_crs)
@@ -221,7 +228,7 @@ def zonal_stats_by_pa_class(
                     pa_gdf_masked = pa_gdf
 
                 # Process each IUCN category
-                for iucn_cat in iucn_categories:
+                for iucn_cat in all_iucn_categories:
                     class_gdf = pa_gdf_masked[pa_gdf_masked[iucn_col] == iucn_cat]
 
                     # Union all geometries for this class to avoid overlap
@@ -286,6 +293,7 @@ def zonal_stats_by_pa_class(
                                 'max': float(np.max(valid_pixels)),
                                 'pixel_count': int(len(valid_pixels))
                             })
+                            categories_with_data.add(iucn_cat)
                         else:
                             logger.warning(
                                 f"No valid pixels for {criterion_name} in IUCN cat {iucn_cat}"
@@ -338,6 +346,26 @@ def zonal_stats_by_pa_class(
                             )
                 except Exception as e:
                     logger.error(f"Outside-PA stats failed for {criterion_name}: {e}", exc_info=True)
+
+                # Emit placeholder rows for IUCN categories that had no
+                # raster overlap so they still appear in charts/tables —
+                # matching the IUCN Coverage table which lists all categories.
+                for iucn_cat in all_iucn_categories:
+                    if iucn_cat not in categories_with_data:
+                        logger.info(
+                            f"No raster data for {criterion_name} in IUCN cat {iucn_cat}; "
+                            f"emitting NaN placeholder row"
+                        )
+                        results.append({
+                            'criterion': criterion_name,
+                            'iucn_cat': iucn_cat,
+                            'mean': float('nan'),
+                            'median': float('nan'),
+                            'std': float('nan'),
+                            'min': float('nan'),
+                            'max': float('nan'),
+                            'pixel_count': 0
+                        })
 
         except Exception as e:
             logger.error(f"Failed to process raster {raster_path}: {e}", exc_info=True)
