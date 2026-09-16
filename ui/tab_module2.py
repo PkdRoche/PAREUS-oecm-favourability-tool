@@ -1708,9 +1708,13 @@ def render_module2_tab():
         # Retrieve raster paths from session state
         raster_paths = st.session_state.get('criterion_raster_paths', {})
 
-        # Check if weights sum to 1.0
+        # Inter-group weights — warn if they don't sum to 1.0, but always
+        # normalise and continue. Blocking the MCE on an un-normalised sum
+        # meant that moving a single slider (which transiently breaks the
+        # constraint) silently left old results on screen with no feedback
+        # visible near the map.
         weight_sum = parameters.get('W_A', 0) + parameters.get('W_B', 0) + parameters.get('W_C', 0)
-        weights_valid = abs(weight_sum - 1.0) < 0.001
+        weights_valid = weight_sum > 0  # only block if all-zero (would cause division by zero)
 
         st.markdown("---")
 
@@ -1806,10 +1810,13 @@ def render_module2_tab():
         # ------------------------------------------------------------------
         if rasters_aligned:
             if not weights_valid:
-                st.error(
-                    f"Inter-group weights must sum to 1.0 (current sum: {weight_sum:.3f})"
-                )
+                st.error("Inter-group weights are all zero — set at least one weight > 0 in ② Parameters.")
             else:
+                if abs(weight_sum - 1.0) >= 0.001:
+                    st.caption(
+                        f"⚠ Inter-group weights sum to {weight_sum:.3f} — "
+                        "they will be normalised automatically."
+                    )
                 from modules.module2_favourability import mce_engine
 
                 aligned_arrays  = st.session_state['_aligned_arrays']
