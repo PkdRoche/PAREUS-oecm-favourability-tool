@@ -17,7 +17,7 @@ rtree>=1.0.0
 
 # Map rendering
 folium>=0.15.0
-streamlit-folium>=0.18.0
+streamlit-folium>=0.20
 
 # Export / reporting
 python-docx>=1.1.0
@@ -25,3 +25,8 @@ python-docx>=1.1.0
 # Utilities
 requests>=2.31.0
 pyyaml>=6.0.0
+
+
+#optimization
+pulp>=2.7
+
