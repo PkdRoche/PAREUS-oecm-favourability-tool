@@ -32,13 +32,13 @@ clc_compatibility:
 
   # Level 2: Agricultural areas
   "2.1":
-    status: eliminatory
-    score: null
-    label: "Arable land (intensive)"
+    status: compatible
+    score: 0.5
+    label: "Arable land"
 
   "2.2":
     status: compatible
-    score: 0.5
+    score: 0.6
     label: "Permanent crops"
 
   "2.3":
@@ -63,8 +63,8 @@ clc_compatibility:
     label: "Scrub and herbaceous vegetation"
 
   "3.3":
-    status: neutral
-    score: 0.30
+    status: compatible
+    score: 0.6
     label: "Open spaces with little vegetation"
 
   # Level 4: Wetlands
@@ -78,15 +78,19 @@ clc_compatibility:
     score: 0.85
     label: "Coastal wetlands"
 
-  # Level 5: Water bodies
+  # Level 5: Water bodies — excluded from analysis.
+  # Ecosystem condition and ES rasters have no values over water, so leaving
+  # these as "compatible" would propagate NaN through the geometric mean and
+  # produce silent blank pixels. Marking them eliminatory makes the exclusion
+  # explicit and visible in the Group D eliminated count.
   "5.1":
-    status: compatible
-    score: 0.70
+    status: eliminatory
+    score: null
     label: "Inland waters"
 
   "5.2":
-    status: compatible
-    score: 0.65
+    status: eliminatory
+    score: null
     label: "Marine waters"
 
 # Note: these values are indicative defaults.
