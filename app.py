@@ -1,4 +1,4 @@
-"""OECM Favourability Tool — Streamlit entry point."""
+"""PCA tool — Streamlit entry point."""
 import streamlit as st
 import logging
 from pathlib import Path
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Page configuration
 # ===================================================================
 st.set_page_config(
-    page_title="OECM Favourability Tool",
+    page_title="PCA planning tool",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
