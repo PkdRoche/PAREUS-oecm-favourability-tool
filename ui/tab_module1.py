@@ -165,6 +165,7 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
     strict_pct = kmgbf_indicator(pa_gdf, territory_area_ha,
                                  classes=['strict_core'])             # I–II only
     target_30 = 30.0
+    strict_target = 10.0
 
     with col2:
         delta = kmgbf_pct - target_30
@@ -184,12 +185,12 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
         st.metric(
             label="Strict protection only (IUCN I–II)",
             value=f"{strict_pct:.1f}%",
-            delta=f"{strict_pct - target_30:+.1f}% vs 30%",
+            delta=f"{strict_pct - strict_target:+.1f}% vs 10% target",
             help=(
                 "Sub-indicator: area under the most restrictive management regimes "
                 "(IUCN Ia strict nature reserves, Ib wilderness areas, II national parks). "
-                "Many national frameworks and IPBES reports use this narrower metric alongside "
-                "the full KMGBF indicator."
+                "Target: 10% of territory. Many national frameworks and IPBES reports use "
+                "this narrower metric alongside the full KMGBF indicator."
             )
         )
 
