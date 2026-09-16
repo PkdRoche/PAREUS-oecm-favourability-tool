@@ -7,9 +7,6 @@ import pandas as pd
 import geopandas as gpd
 import rasterio
 from rasterio.crs import CRS as _RioCRS
-from rasterio.mask import mask
-from shapely.geometry import mapping, box
-from shapely.ops import unary_union
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +185,8 @@ def zonal_stats_by_pa_class(
             'criterion', 'iucn_cat', 'mean', 'median', 'std', 'min', 'max', 'pixel_count'
         ])
 
+    from rasterio.features import rasterize as _rasterize
+
     results = []
 
     # Collect all IUCN categories up front so we can guarantee every
@@ -203,7 +202,6 @@ def zonal_stats_by_pa_class(
 
         try:
             with rasterio.open(raster_path) as src:
-                # Check CRS and reproject if needed
                 raster_crs = src.crs
                 if raster_crs is None:
                     logger.warning(
@@ -212,10 +210,21 @@ def zonal_stats_by_pa_class(
                     )
                     raster_crs = 'EPSG:3035'
 
-                # Determine nodata value
                 nodata_value = nodata if nodata is not None else src.nodata
 
-                # Reproject entire PA GeoDataFrame once (not once per category)
+                # Read the full raster once — all per-category extraction
+                # uses numpy boolean indexing, not rasterio.mask (which
+                # fails on complex multi-polygon unions from many PA sites).
+                raster_data = src.read(1).astype(np.float64)
+                raster_transform = src.transform
+                raster_shape = raster_data.shape
+
+                # Build a valid-pixel mask (excludes nodata and NaN)
+                valid_mask = ~np.isnan(raster_data)
+                if nodata_value is not None:
+                    valid_mask &= (raster_data != nodata_value)
+
+                # Reproject entire PA GeoDataFrame once
                 _target_crs = _RioCRS.from_user_input(raster_crs)
                 _pa_crs = _RioCRS.from_user_input(pa_gdf.crs)
                 if _target_crs != _pa_crs:
@@ -223,109 +232,77 @@ def zonal_stats_by_pa_class(
                         f"Raster CRS ({raster_crs}) differs from PA CRS ({pa_gdf.crs}). "
                         f"Reprojecting PA geometries once for all categories."
                     )
-                    pa_gdf_masked = pa_gdf.to_crs(raster_crs)
+                    pa_gdf_reproj = pa_gdf.to_crs(raster_crs)
                 else:
-                    pa_gdf_masked = pa_gdf
+                    pa_gdf_reproj = pa_gdf
 
-                # Process each IUCN category
+                # Build a combined "any PA" mask for computing 'outside' stats
+                all_pa_geoms = [
+                    (g, 1) for g in pa_gdf_reproj.geometry
+                    if g is not None and not g.is_empty
+                ]
+
+                # Process each IUCN category using rasterize (handles many
+                # small polygons reliably, unlike rasterio.mask on complex unions)
                 for iucn_cat in all_iucn_categories:
-                    class_gdf = pa_gdf_masked[pa_gdf_masked[iucn_col] == iucn_cat]
-
-                    # Union all geometries for this class to avoid overlap
-                    union_geom = unary_union(class_gdf.geometry)
-
-                    # Skip empty unions early
-                    if getattr(union_geom, 'is_empty', False):
+                    class_gdf = pa_gdf_reproj[pa_gdf_reproj[iucn_col] == iucn_cat]
+                    geoms = [
+                        (g, 1) for g in class_gdf.geometry
+                        if g is not None and not g.is_empty
+                    ]
+                    if not geoms:
                         logger.warning(
-                            f"Empty geometry union for class {iucn_cat} ({criterion_name}); skipping"
+                            f"No valid geometries for {iucn_cat} ({criterion_name}); skipping"
                         )
                         continue
 
-                    # If the union is a GeometryCollection, folium/mapping can behave oddly;
-                    # flatten to its unary union of parts.
                     try:
-                        if union_geom.geom_type == 'GeometryCollection':
-                            union_geom = unary_union(getattr(union_geom, 'geoms', []))
-                    except Exception:
-                        pass
-
-                    # Fast extent-based intersection test against raster bounds.
-                    # This avoids rasterio.mask raising ValueError("Input shapes do not overlap raster")
-                    # and provides actionable logs.
-                    try:
-                        rb = src.bounds
-                        raster_bounds_geom = box(rb.left, rb.bottom, rb.right, rb.top)
-                        if not union_geom.intersects(raster_bounds_geom):
-                            logger.warning(
-                                f"No raster overlap for {criterion_name} in class {iucn_cat}. "
-                                f"Raster bounds={rb}, geom bounds={getattr(union_geom, 'bounds', None)}"
-                            )
-                            continue
-                    except Exception:
-                        pass
-
-                    # Mask raster to this IUCN category
-                    try:
-                        masked_array, _ = mask(
-                            src,
-                            [mapping(union_geom)],
-                            crop=True,
-                            nodata=nodata_value,
-                            filled=True
-                        )
-
-                        # Extract valid pixels (first band)
-                        pixels = masked_array[0].astype(np.float64)
-                        if nodata_value is not None:
-                            valid_pixels = pixels[pixels != nodata_value]
-                        else:
-                            valid_pixels = pixels
-                        valid_pixels = valid_pixels[~np.isnan(valid_pixels)]
-
-                        if len(valid_pixels) > 0:
-                            results.append({
-                                'criterion': criterion_name,
-                                'iucn_cat': iucn_cat,
-                                'mean': float(np.mean(valid_pixels)),
-                                'median': float(np.median(valid_pixels)),
-                                'std': float(np.std(valid_pixels)),
-                                'min': float(np.min(valid_pixels)),
-                                'max': float(np.max(valid_pixels)),
-                                'pixel_count': int(len(valid_pixels))
-                            })
-                            categories_with_data.add(iucn_cat)
-                        else:
-                            logger.warning(
-                                f"No valid pixels for {criterion_name} in IUCN cat {iucn_cat}"
-                            )
-
-                    except ValueError as e:
+                        cat_mask = _rasterize(
+                            shapes=geoms,
+                            out_shape=raster_shape,
+                            transform=raster_transform,
+                            fill=0,
+                            dtype='uint8',
+                        ).astype(bool)
+                    except Exception as e:
                         logger.warning(
-                            f"Failed to mask {criterion_name} for IUCN cat {iucn_cat}: {e}"
+                            f"Failed to rasterize {iucn_cat} for {criterion_name}: {e}"
                         )
                         continue
+
+                    zone_mask = cat_mask & valid_mask
+                    valid_pixels = raster_data[zone_mask]
+
+                    if len(valid_pixels) > 0:
+                        results.append({
+                            'criterion': criterion_name,
+                            'iucn_cat': iucn_cat,
+                            'mean': float(np.mean(valid_pixels)),
+                            'median': float(np.median(valid_pixels)),
+                            'std': float(np.std(valid_pixels)),
+                            'min': float(np.min(valid_pixels)),
+                            'max': float(np.max(valid_pixels)),
+                            'pixel_count': int(len(valid_pixels))
+                        })
+                        categories_with_data.add(iucn_cat)
+                    else:
+                        logger.warning(
+                            f"No valid pixels for {criterion_name} in IUCN cat {iucn_cat} "
+                            f"(rasterized {len(geoms)} geom(s), zone pixels={int(cat_mask.sum())})"
+                        )
 
                 # Compute statistics for areas OUTSIDE all PAs
-                # Use a separate try/except so errors here don't swallow per-class results
                 try:
-                    logger.info(f"Computing outside-PA statistics for {criterion_name}")
-                    all_pa_union = unary_union(pa_gdf_masked.geometry)
-
-                    if getattr(all_pa_union, 'is_empty', True):
-                        logger.warning(f"Empty PA union for {criterion_name}; skipping outside stats")
-                    else:
-                        from rasterio.features import geometry_mask
-                        raster_data = src.read(1)
-                        outside_mask = geometry_mask(
-                            [mapping(all_pa_union)],
-                            transform=src.transform,
-                            invert=False,   # True = outside all PAs
-                            out_shape=raster_data.shape
-                        )
-                        outside_pixels = raster_data[outside_mask].astype(np.float64)
-                        if nodata_value is not None:
-                            outside_pixels = outside_pixels[outside_pixels != nodata_value]
-                        outside_pixels = outside_pixels[~np.isnan(outside_pixels)]
+                    if all_pa_geoms:
+                        all_pa_mask = _rasterize(
+                            shapes=all_pa_geoms,
+                            out_shape=raster_shape,
+                            transform=raster_transform,
+                            fill=0,
+                            dtype='uint8',
+                        ).astype(bool)
+                        outside_zone = ~all_pa_mask & valid_mask
+                        outside_pixels = raster_data[outside_zone]
 
                         if len(outside_pixels) > 0:
                             results.append({
@@ -340,16 +317,13 @@ def zonal_stats_by_pa_class(
                             })
                         else:
                             logger.warning(
-                                f"No valid pixels outside PAs for {criterion_name} "
-                                f"(nodata={nodata_value}, outside pixel count before filter="
-                                f"{np.sum(outside_mask)})"
+                                f"No valid pixels outside PAs for {criterion_name}"
                             )
                 except Exception as e:
                     logger.error(f"Outside-PA stats failed for {criterion_name}: {e}", exc_info=True)
 
                 # Emit placeholder rows for IUCN categories that had no
-                # raster overlap so they still appear in charts/tables —
-                # matching the IUCN Coverage table which lists all categories.
+                # raster overlap so they still appear in charts/tables.
                 for iucn_cat in all_iucn_categories:
                     if iucn_cat not in categories_with_data:
                         logger.info(

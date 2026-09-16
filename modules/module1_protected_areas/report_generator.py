@@ -144,15 +144,12 @@ def _criterion_bar_figure(zonal_df: pd.DataFrame, figsize: tuple = (12, 6)) -> p
         ['criterion', 'iucn_cat', 'mean']
     ].copy()
 
-    # Normalise per criterion
     for crit in chart_data['criterion'].unique():
         mask = chart_data['criterion'] == crit
         vals = chart_data.loc[mask, 'mean']
-        vmin, vmax = vals.min(), vals.max()
-        if vmax > vmin:
-            chart_data.loc[mask, 'mean'] = (vals - vmin) / (vmax - vmin)
-        if crit == 'anthropogenic_pressure':
-            chart_data.loc[mask, 'mean'] = 1.0 - chart_data.loc[mask, 'mean']
+        vmax = vals.max()
+        if vmax > 0:
+            chart_data.loc[mask, 'mean'] = vals / vmax
 
     from modules.module1_protected_areas.zonal_stats import iucn_category_sort_key
 
@@ -447,8 +444,7 @@ def generate_docx_report(
 
         doc.add_paragraph(
             'Mean values of each MCE criterion raster within each IUCN category. '
-            'All continuous criteria are min-max normalised to [0–1] for comparability. '
-            'Anthropogenic pressure is inverted (low pressure = high score).'
+            'Each criterion is scaled relative to its maximum category mean for cross-criterion comparability.'
         )
 
         _heading('4.1 Criterion Scores by IUCN Category', level=2)

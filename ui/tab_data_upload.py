@@ -42,9 +42,6 @@ _PARAM_TYPES = {
     'exclude_pa_pixels': bool,
     'exclude_pa_classes': list,
     'show_pa_overlay': bool,
-    'provisioning_calibration_mode': str,
-    'provisioning_mean': float,
-    'provisioning_std': float,
 }
 
 

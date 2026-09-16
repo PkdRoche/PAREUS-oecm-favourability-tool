@@ -764,23 +764,22 @@ def render_tab_module1(pa_gdf=None, territory_geom=None, ecosystem_layer=None):
                 # Row 1: Grouped bar chart
                 st.markdown("#### Mean Criterion Scores by IUCN Category")
                 st.caption(
-                    "All criteria normalised to [0–1] for display. "
-                    "Anthropogenic pressure is inverted (lower raw value = higher score). "
+                    "Each criterion is scaled relative to its maximum category mean for cross-criterion comparability. "
                     "Land use (CLC categorical codes) is excluded — see breakdown below."
                 )
 
                 try:
                     import plotly.express as px
 
-                    chart_data = zonal_df[zonal_df['criterion'] != 'landuse'][['criterion', 'iucn_cat', 'mean']].copy()
+                    chart_data = zonal_df[zonal_df['criterion'] != 'landuse'][
+                        ['criterion', 'iucn_cat', 'mean']
+                    ].copy()
                     for crit in chart_data['criterion'].unique():
                         mask = chart_data['criterion'] == crit
                         vals = chart_data.loc[mask, 'mean']
-                        vmin, vmax = vals.min(), vals.max()
-                        if vmax > vmin:
-                            chart_data.loc[mask, 'mean'] = (vals - vmin) / (vmax - vmin)
-                        if crit == 'anthropogenic_pressure':
-                            chart_data.loc[mask, 'mean'] = 1.0 - chart_data.loc[mask, 'mean']
+                        vmax = vals.max()
+                        if vmax > 0:
+                            chart_data.loc[mask, 'mean'] = vals / vmax
 
                     cat_order = sorted(
                         [c for c in chart_data['iucn_cat'].unique() if c != 'outside'],

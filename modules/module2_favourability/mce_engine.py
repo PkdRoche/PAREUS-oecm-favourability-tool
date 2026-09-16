@@ -336,9 +336,6 @@ def compute_favourability(
     proximity_bonus: float = 0.0,
     proximity_decay_km: float = 10.0,
     pa_proximity_raster: Optional[np.ndarray] = None,
-    auto_calibrate_provisioning: bool = False,
-    provisioning_mean: Optional[float] = None,
-    provisioning_std: Optional[float] = None,
 ) -> dict[str, np.ndarray]:
     """Compute full MCE favourability pipeline.
 
@@ -355,7 +352,7 @@ def compute_favourability(
         Cultural ecosystem services capacity, values in [0, 1].
     provisioning_es : np.ndarray
         Provisioning ecosystem services capacity, values in [0, 1].
-        Will be transformed using Gaussian normalisation.
+        Used as-is (linear passthrough).
     anthropogenic_pressure : np.ndarray
         Raw anthropogenic pressure layer (e.g., population density).
         Dual role: values > threshold_max -> Group D elimination;
@@ -382,31 +379,6 @@ def compute_favourability(
         Boolean array (same shape as input layers) where True indicates
         pixels within conservation gap zones from Module 1. If None or
         gap_bonus == 0.0, no bonus is applied.
-    auto_calibrate_provisioning : bool, optional
-        When True, the provisioning ES Gaussian optimum (mean) and spread
-        (std) are computed from this territory's own eligible provisioning_es
-        pixels, rather than the fixed config default. Default is False —
-        auto-calibration re-centres "moderate use" on whatever this
-        territory's own average happens to be, which means a territory whose
-        provisioning capacity is uniformly low (near-pristine) or uniformly
-        high (intensively used) will score its own average as near-optimal.
-        That is a *relative*, within-territory judgement, not the *absolute*
-        "does this pixel have genuinely moderate, sustainable-use character"
-        judgement the spec's Group C / classical_pa_mask discrimination
-        relies on (see criteria_manager.check_use_presence) — a territory
-        that is uniformly poor OECM material (better suited to classical PA)
-        should score poorly here, not be auto-normalised to "optimal". Use
-        auto-calibration deliberately (e.g. ranking candidate micro-sites
-        *within* one already-selected territory), not as a default fix for
-        low scores. Overridden by provisioning_mean/provisioning_std when
-        either is explicitly given.
-    provisioning_mean, provisioning_std : float or None, optional
-        Manual override for the provisioning ES Gaussian parameters. Ignored
-        when auto_calibrate_provisioning is True and both are None; when
-        auto-calibration is True but one is given explicitly, that one wins
-        over the computed value. Falls back to config/transformation_functions.yaml
-        when auto-calibration is off and neither is given.
-
     Returns
     -------
     dict[str, np.ndarray]
@@ -415,8 +387,6 @@ def compute_favourability(
         - 'oecm_mask': Boolean array, True = OECM favourable.
         - 'classical_pa_mask': Boolean array, True = classical PA preferable.
         - 'eliminatory_mask': Boolean array, True = eligible (passed Group D).
-        - 'provisioning_calibration': {'mean': float, 'std': float, 'auto': bool} —
-          the Gaussian parameters actually used, for the reproducibility log.
 
     Raises
     ------
@@ -432,7 +402,7 @@ def compute_favourability(
        and excessive pressure eliminate pixels.
     2. Step 1: Normalise layers using appropriate transformation functions:
        - pressure: inverted linear (low pressure = high score)
-       - provisioning_es: Gaussian (non-monotone, optimum at mean)
+       - provisioning_es: linear passthrough (values used as-is)
        - others: sigmoid or linear per config
     3. Step 2: Compute intra-group scores (A, B, C) using chosen method.
     4. Step 3: Compute inter-group score using chosen method.
@@ -537,42 +507,11 @@ def compute_favourability(
         percentile_norm=percentile_norm
     )
 
-    # Provisioning ES - Gaussian (non-monotone, optimum at mean).
-    # Calibration priority: explicit manual override > auto-calibration from
-    # this territory's own eligible pixels > config/transformation_functions.yaml
-    # default. Auto-calibration exists because a single universal default
-    # (originally mean=0.45, std=0.20) systematically crushed the score for
-    # any territory whose typical provisioning capacity doesn't happen to sit
-    # near 0.45 — e.g. near-pristine areas with low extractive use, or
-    # intensively-used production landscapes, both of which are common and
-    # legitimate OECM candidate profiles, not edge cases.
+    # Provisioning ES - linear passthrough (values already in [0, 1])
     prov_params = transform_config['provisioning_es']
-    if auto_calibrate_provisioning and provisioning_mean is None and provisioning_std is None:
-        _valid_prov = provisioning_es[eliminatory_mask & ~np.isnan(provisioning_es)]
-        if len(_valid_prov) >= 30:
-            calibrated_mean = float(np.mean(_valid_prov))
-            # Floor the std so a near-uniform territory doesn't collapse the
-            # Gaussian to a razor-thin peak that penalises normal local variation.
-            calibrated_std = max(float(np.std(_valid_prov)), 0.10)
-        else:
-            logger.warning(
-                f"Only {len(_valid_prov)} eligible provisioning_es pixels — "
-                "too few to auto-calibrate reliably, falling back to config default."
-            )
-            calibrated_mean = prov_params['mean']
-            calibrated_std = prov_params['std']
-    else:
-        calibrated_mean = provisioning_mean if provisioning_mean is not None else prov_params['mean']
-        calibrated_std = provisioning_std if provisioning_std is not None else prov_params['std']
-
-    logger.info(
-        f"Provisioning ES Gaussian: mean={calibrated_mean:.3f}, std={calibrated_std:.3f} "
-        f"(auto_calibrate={auto_calibrate_provisioning})"
-    )
-    prov_score = raster_preprocessing.normalize_gaussian(
-        provisioning_es,
-        mean=calibrated_mean,
-        std=calibrated_std
+    prov_score = raster_preprocessing.normalize_layer(
+        provisioning_es, 'provisioning_es', prov_params,
+        percentile_norm=percentile_norm
     )
 
     # Anthropogenic pressure - inverted linear, normalised against [0, threshold_pressure].
@@ -760,11 +699,6 @@ def compute_favourability(
         'oecm_mask':         oecm_mask & eliminatory_mask,
         'classical_pa_mask': classical_pa_mask & eliminatory_mask,
         'eliminatory_mask':  eliminatory_mask,
-        'provisioning_calibration': {
-            'mean': calibrated_mean,
-            'std':  calibrated_std,
-            'auto': bool(auto_calibrate_provisioning and provisioning_mean is None and provisioning_std is None),
-        },
         'group_scores': {
             'A': group_a_score,
             'B': group_b_score,
