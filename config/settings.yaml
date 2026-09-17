@@ -18,3 +18,17 @@ log_level: "INFO"  # DEBUG | INFO | WARNING | ERROR
 # Interface
 default_tab: 0
 map_tiles: "OpenStreetMap"
+
+# NUTS2 territorial units
+nuts2:
+  eurostat_url: "https://gisco-services.ec.europa.eu/distribution/v2/nuts/geojson/NUTS_RG_{scale}_{year}_3035.geojson"
+  default_year: 2021
+  default_scale: "20M"   # options: 01M, 03M, 10M, 20M, 60M
+  default_country: "FR"
+  cache_ttl_seconds: 3600
+
+# Corine Land Cover configuration
+clc:
+  default_config: "config/clc_reclassification.yaml"
+  nodata_values: [0, 128]
+  native_resolution_m: 100

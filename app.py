@@ -1,20 +1,163 @@
 """OECM Favourability Tool — Streamlit entry point."""
 import streamlit as st
+import logging
+from pathlib import Path
 
-st.set_page_config(page_title="OECM Favourability Tool", layout="wide")
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
+logger = logging.getLogger(__name__)
+
+# ===================================================================
+# Page configuration
+# ===================================================================
+st.set_page_config(
+    page_title="OECM Favourability Tool",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Tab styling: bold labels, 2 rows of 2 (flex-wrap)
 st.markdown(
-    "<style>[data-testid='stAppViewBlockContainer'] { opacity: 1 !important; }"
-    " .stApp > header + div { opacity: 1 !important; }"
-    " div[class*='stale'] { opacity: 1 !important; }</style>",
+    """
+    <style>
+    /* Wrap tabs onto 2 rows of 2 */
+    .stTabs [data-baseweb="tab-list"] {
+        flex-wrap: wrap;
+        gap: 8px 12px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        flex: 0 0 calc(50% - 8px);
+        box-sizing: border-box;
+        font-size: 2.1rem;
+        font-weight: 700;
+        padding: 16px 24px;
+        justify-content: flex-start;
+    }
+    .stTabs [data-baseweb="tab"] p {
+        font-size: 2.1rem !important;
+        font-weight: 700 !important;
+    }
+    .stTabs [aria-selected="true"] {
+        border-bottom: 3px solid #2E7D32;
+        color: #2E7D32;
+    }
+    </style>
+    """,
     unsafe_allow_html=True,
 )
-st.title("OECM Territorial Favourability Analysis Tool")
 
-tab1, tab2 = st.tabs(["Module 1 — Protection Network Diagnostic", "Module 2 — OECM Favourability Analysis"])
+# ===================================================================
+# Import UI components
+# ===================================================================
+from ui import tab_data_upload
+from ui.tab_parameters import render_parameters_tab
+from ui.tab_ahp import render_tab_ahp
+from ui.tab_module1 import render_tab_module1
+from ui import tab_module2
+
+# ===================================================================
+# Project logos (PAREUS / INRAE)
+# ===================================================================
+_ROOT_DIR = Path(__file__).parent
+_pareus_logo = _ROOT_DIR / "PAREUSlogo.png"
+_inrae_logo = _ROOT_DIR / "INRAE_logo.png"
+
+if _pareus_logo.exists() or _inrae_logo.exists():
+    logo_col1, logo_col2, _logo_spacer = st.columns([2.2, 1.8, 4])
+    with logo_col1:
+        if _pareus_logo.exists():
+            st.image(str(_pareus_logo), width=240)
+    with logo_col2:
+        if _inrae_logo.exists():
+            st.image(str(_inrae_logo), width=197)
+
+# ===================================================================
+# Main title and description
+# ===================================================================
+st.title("OECM Conservation Planning Tool")
+
+st.markdown(
+    """
+    GIS decision-support tool for identifying and assessing candidate territories for
+    **Other Effective Area-based Conservation Measures (OECMs)**,
+    aligned with **KMGBF Target 3** (CBD COP15 decision 15/4) and the global **30×30** biodiversity commitment.
+
+    | Step | Module | Description |
+    |---|---|---|
+    | ① | **Data Upload** | Load WDPA protected areas, NUTS study-area boundaries, and MCE criterion rasters |
+    | ② | **Parameters** | Study area, thresholds, normalisation, aggregation method, weights, bonuses |
+    | ③ | **Weight Calibration (AHP)** | Set criterion importance using Analytic Hierarchy Process pairwise comparisons |
+    | ④ | **Protection Network Diagnostic** | WDPA coverage statistics, KMGBF indicator, ecosystem representativity, gap analysis |
+    | ⑤ | **OECM Favourability Analysis** | Multi-criteria evaluation, candidate site delineation, sensitivity analysis, and GeoTIFF / DOCX export |
+    """
+)
+
+# ===================================================================
+# Instructions — input data requirements (INSTRUCTIONS.md)
+# ===================================================================
+_instructions_path = _ROOT_DIR / "INSTRUCTIONS.md"
+if _instructions_path.exists():
+    with st.expander("📄 Instructions — input data requirements"):
+        st.markdown(_instructions_path.read_text(encoding="utf-8"))
+
+st.markdown("---")
+
+# ===================================================================
+# Tabs: Data Upload, Parameters, AHP, Module 1, and Module 2
+# ===================================================================
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "① Data Upload",
+    "② Parameters",
+    "③ Weight Calibration (AHP)",
+    "④ Protection Network Diagnostic",
+    "⑤ OECM Favourability Analysis"
+])
 
 with tab1:
-    st.info("Module 1 under development.")
+    tab_data_upload.render()
 
 with tab2:
-    st.info("Module 2 under development.")
+    parameters = render_parameters_tab()
+
+    # Store parameters in session state for access across tabs
+    st.session_state['parameters'] = parameters
+
+    # Store study area geometry separately for Module 1 compatibility
+    if 'study_area_geometry' in parameters:
+        st.session_state['territory_geom'] = parameters['study_area_geometry']
+
+    # Log current parameters (DEBUG level)
+    logger.debug(f"Current parameters: {parameters}")
+
+with tab3:
+    render_tab_ahp()
+
+with tab4:
+    # Retrieve PA data from session state if available
+    pa_gdf = st.session_state.get('pa_gdf', None)
+    territory_geom = st.session_state.get('territory_geom', None)
+    ecosystem_layer = st.session_state.get('ecosystem_layer', None)
+
+    # Render Module 1 tab
+    render_tab_module1(
+        pa_gdf=pa_gdf,
+        territory_geom=territory_geom,
+        ecosystem_layer=ecosystem_layer
+    )
+
+with tab5:
+    tab_module2.render_module2_tab()
+
+# ===================================================================
+# Footer
+# ===================================================================
+st.markdown("---")
+st.caption(
+    "OECM Favourability Tool v0.1 | "
+    "Developed with Claude Code | "
+    "Full specifications: .claude/agents/SPECIFICATIONS.md"
+)

@@ -1,0 +1,363 @@
+# Corine Land Cover 2018 → OECM favourability score mapping
+# Score range: 0.0 (unsuitable) to 1.0 (highly suitable)
+# Source: EEA CLC 2018 nomenclature
+#
+# Scoring rationale:
+# - Higher scores indicate greater ecological integrity and suitability for OECM designation
+# - Natural and semi-natural ecosystems: 0.70–1.00
+# - Extensively managed agricultural areas: 0.25–0.60
+# - Intensively managed areas: 0.10–0.25
+# - Artificial surfaces: 0.00–0.05
+
+metadata:
+  source: "Corine Land Cover 2018"
+  crs: "EPSG:3035"
+  native_resolution_m: 100
+  nodata_values: [0, 128]
+  score_range: [0.0, 1.0]
+  last_updated: "2026-03-25"
+  total_classes: 44
+
+reclassification:
+  # ========================================================================
+  # Level 1: Artificial surfaces
+  # ========================================================================
+
+  # 1.1 Urban fabric
+  111:
+    label: "Continuous urban fabric"
+    level1: "Artificial surfaces"
+    level2: "Urban fabric"
+    score: 0.00
+    notes: "Eliminatory — no OECM suitability"
+
+  112:
+    label: "Discontinuous urban fabric"
+    level1: "Artificial surfaces"
+    level2: "Urban fabric"
+    score: 0.02
+    notes: "May contain small green patches but heavily modified"
+
+  # 1.2 Industrial, commercial and transport units
+  121:
+    label: "Industrial or commercial units"
+    level1: "Artificial surfaces"
+    level2: "Industrial, commercial and transport units"
+    score: 0.00
+    notes: "Eliminatory"
+
+  122:
+    label: "Road and rail networks and associated land"
+    level1: "Artificial surfaces"
+    level2: "Industrial, commercial and transport units"
+    score: 0.00
+    notes: "Eliminatory"
+
+  123:
+    label: "Port areas"
+    level1: "Artificial surfaces"
+    level2: "Industrial, commercial and transport units"
+    score: 0.00
+    notes: "Eliminatory"
+
+  124:
+    label: "Airports"
+    level1: "Artificial surfaces"
+    level2: "Industrial, commercial and transport units"
+    score: 0.00
+    notes: "Eliminatory"
+
+  # 1.3 Mine, dump and construction sites
+  131:
+    label: "Mineral extraction sites"
+    level1: "Artificial surfaces"
+    level2: "Mine, dump and construction sites"
+    score: 0.00
+    notes: "Eliminatory — active extraction"
+
+  132:
+    label: "Dump sites"
+    level1: "Artificial surfaces"
+    level2: "Mine, dump and construction sites"
+    score: 0.00
+    notes: "Eliminatory"
+
+  133:
+    label: "Construction sites"
+    level1: "Artificial surfaces"
+    level2: "Mine, dump and construction sites"
+    score: 0.00
+    notes: "Eliminatory — transient class"
+
+  # 1.4 Artificial, non-agricultural vegetated areas
+  141:
+    label: "Green urban areas"
+    level1: "Artificial surfaces"
+    level2: "Artificial, non-agricultural vegetated areas"
+    score: 0.05
+    notes: "Urban parks — limited ecological value"
+
+  142:
+    label: "Sport and leisure facilities"
+    level1: "Artificial surfaces"
+    level2: "Artificial, non-agricultural vegetated areas"
+    score: 0.03
+    notes: "Golf courses, sports grounds — heavily managed"
+
+  # ========================================================================
+  # Level 2: Agricultural areas
+  # ========================================================================
+
+  # 2.1 Arable land
+  211:
+    label: "Non-irrigated arable land"
+    level1: "Agricultural areas"
+    level2: "Arable land"
+    score: 0.15
+    notes: "Intensive annual crops — low biodiversity"
+
+  212:
+    label: "Permanently irrigated land"
+    level1: "Agricultural areas"
+    level2: "Arable land"
+    score: 0.10
+    notes: "High input intensity — lowest agricultural score"
+
+  213:
+    label: "Rice fields"
+    level1: "Agricultural areas"
+    level2: "Arable land"
+    score: 0.20
+    notes: "Seasonal wetland habitat — some bird value"
+
+  # 2.2 Permanent crops
+  221:
+    label: "Vineyards"
+    level1: "Agricultural areas"
+    level2: "Permanent crops"
+    score: 0.30
+    notes: "Perennial structure but often monoculture"
+
+  222:
+    label: "Fruit trees and berry plantations"
+    level1: "Agricultural areas"
+    level2: "Permanent crops"
+    score: 0.35
+    notes: "Can support pollinators if low-intensity"
+
+  223:
+    label: "Olive groves"
+    level1: "Agricultural areas"
+    level2: "Permanent crops"
+    score: 0.40
+    notes: "Traditional groves have high biodiversity potential"
+
+  # 2.3 Pastures
+  231:
+    label: "Pastures"
+    level1: "Agricultural areas"
+    level2: "Pastures"
+    score: 0.35
+    notes: "Permanent grasslands — moderate biodiversity"
+
+  # 2.4 Heterogeneous agricultural areas
+  241:
+    label: "Annual crops associated with permanent crops"
+    level1: "Agricultural areas"
+    level2: "Heterogeneous agricultural areas"
+    score: 0.30
+    notes: "Mixed structure — higher landscape diversity"
+
+  242:
+    label: "Complex cultivation patterns"
+    level1: "Agricultural areas"
+    level2: "Heterogeneous agricultural areas"
+    score: 0.40
+    notes: "Small-scale mosaic — High Nature Value farmland potential"
+
+  243:
+    label: "Land principally occupied by agriculture, with significant areas of natural vegetation"
+    level1: "Agricultural areas"
+    level2: "Heterogeneous agricultural areas"
+    score: 0.50
+    notes: "Key HVN category — mix of agriculture and natural patches"
+
+  244:
+    label: "Agro-forestry areas"
+    level1: "Agricultural areas"
+    level2: "Heterogeneous agricultural areas"
+    score: 0.55
+    notes: "Trees + agriculture — high structural diversity"
+
+  # ========================================================================
+  # Level 3: Forest and semi-natural areas
+  # ========================================================================
+
+  # 3.1 Forests
+  311:
+    label: "Broad-leaved forest"
+    level1: "Forest and semi-natural areas"
+    level2: "Forests"
+    score: 0.95
+    notes: "High biodiversity — core OECM candidate"
+
+  312:
+    label: "Coniferous forest"
+    level1: "Forest and semi-natural areas"
+    level2: "Forests"
+    score: 0.90
+    notes: "Ecological value depends on naturalness (production vs old-growth)"
+
+  313:
+    label: "Mixed forest"
+    level1: "Forest and semi-natural areas"
+    level2: "Forests"
+    score: 0.93
+    notes: "Structural diversity — high conservation value"
+
+  # 3.2 Scrub and/or herbaceous vegetation associations
+  321:
+    label: "Natural grasslands"
+    level1: "Forest and semi-natural areas"
+    level2: "Scrub and/or herbaceous vegetation associations"
+    score: 0.85
+    notes: "Alpine meadows, steppe — high species richness"
+
+  322:
+    label: "Moors and heathland"
+    level1: "Forest and semi-natural areas"
+    level2: "Scrub and/or herbaceous vegetation associations"
+    score: 0.80
+    notes: "Specialized habitats — often protected under Habitats Directive"
+
+  323:
+    label: "Sclerophyllous vegetation"
+    level1: "Forest and semi-natural areas"
+    level2: "Scrub and/or herbaceous vegetation associations"
+    score: 0.80
+    notes: "Mediterranean maquis, garrigue — endemic biodiversity"
+
+  324:
+    label: "Transitional woodland-shrub"
+    level1: "Forest and semi-natural areas"
+    level2: "Scrub and/or herbaceous vegetation associations"
+    score: 0.75
+    notes: "Succession stage — lower value than mature forest but important habitat"
+
+  # 3.3 Open spaces with little or no vegetation
+  331:
+    label: "Beaches, dunes, sands"
+    level1: "Forest and semi-natural areas"
+    level2: "Open spaces with little or no vegetation"
+    score: 0.60
+    notes: "Coastal dynamic habitats — specialist biodiversity"
+
+  332:
+    label: "Bare rocks"
+    level1: "Forest and semi-natural areas"
+    level2: "Open spaces with little or no vegetation"
+    score: 0.50
+    notes: "Limited biomass but unique species adaptations"
+
+  333:
+    label: "Sparsely vegetated areas"
+    level1: "Forest and semi-natural areas"
+    level2: "Open spaces with little or no vegetation"
+    score: 0.55
+    notes: "Alpine/sub-alpine zones — sensitive ecosystems"
+
+  334:
+    label: "Burnt areas"
+    level1: "Forest and semi-natural areas"
+    level2: "Open spaces with little or no vegetation"
+    score: 0.40
+    notes: "Temporary disturbance — score reflects current degraded state"
+
+  335:
+    label: "Glaciers and perpetual snow"
+    level1: "Forest and semi-natural areas"
+    level2: "Open spaces with little or no vegetation"
+    score: 0.70
+    notes: "Climate-sensitive ecosystems — low biodiversity but high conservation priority"
+
+  # ========================================================================
+  # Level 4: Wetlands
+  # ========================================================================
+
+  # 4.1 Inland wetlands
+  411:
+    label: "Inland marshes"
+    level1: "Wetlands"
+    level2: "Inland wetlands"
+    score: 0.95
+    notes: "Critical biodiversity hotspot — Ramsar priority"
+
+  412:
+    label: "Peat bogs"
+    level1: "Wetlands"
+    level2: "Inland wetlands"
+    score: 0.98
+    notes: "Highest conservation value — carbon storage + rare species"
+
+  # 4.2 Maritime wetlands
+  421:
+    label: "Salt marshes"
+    level1: "Wetlands"
+    level2: "Maritime wetlands"
+    score: 0.90
+    notes: "Coastal ecosystem services — flood regulation + biodiversity"
+
+  422:
+    label: "Salines"
+    level1: "Wetlands"
+    level2: "Maritime wetlands"
+    score: 0.70
+    notes: "Managed salt pans — can have high bird value if extensive"
+
+  423:
+    label: "Intertidal flats"
+    level1: "Wetlands"
+    level2: "Maritime wetlands"
+    score: 0.85
+    notes: "Critical for migratory birds — Natura 2000 priority habitat"
+
+  # ========================================================================
+  # Level 5: Water bodies
+  # ========================================================================
+
+  # 5.1 Inland waters
+  511:
+    label: "Water courses"
+    level1: "Water bodies"
+    level2: "Inland waters"
+    score: 0.75
+    notes: "Rivers/streams — connectivity corridors + aquatic habitat"
+
+  512:
+    label: "Water bodies"
+    level1: "Water bodies"
+    level2: "Inland waters"
+    score: 0.70
+    notes: "Lakes/ponds — depends on eutrophication status"
+
+  # 5.2 Marine waters
+  521:
+    label: "Coastal lagoons"
+    level1: "Water bodies"
+    level2: "Marine waters"
+    score: 0.80
+    notes: "Transitional waters — high productivity + nursery function"
+
+  522:
+    label: "Estuaries"
+    level1: "Water bodies"
+    level2: "Marine waters"
+    score: 0.80
+    notes: "Highly productive — critical fish/bird habitat"
+
+  523:
+    label: "Sea and ocean"
+    level1: "Water bodies"
+    level2: "Marine waters"
+    score: 0.75
+    notes: "Marine ecosystems — score reflects coastal/benthic value for OECM"

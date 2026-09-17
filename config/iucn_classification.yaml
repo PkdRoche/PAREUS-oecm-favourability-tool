@@ -19,18 +19,25 @@ classes:
     priority: 2
     iucn_cats: ["III", "IV"]
     desig_keywords: ["Natural Monument", "Habitat Management Area",
-                     "Arrêté de Protection", "Réserve Biologique"]
+                     "Arrêté de Protection", "Réserve Biologique",
+                     "Geotope Protection Order", "Biotope Protection Order",
+                     "Natural habitats protection Order",
+                     "Regional Nature Reserve"]
 
   contractual:
     label: "Contractual management / Natura 2000"
     colour: "#9FE1CB"
     priority: 3
     iucn_cats: ["V", "VI"]
-    desig_keywords: ["Special Area of Conservation", "SAC",
-                     "Special Protection Area", "SPA",
+    desig_keywords: ["Area of Conservation", "Areas of Conservation",
+                     "Site of Community Importance",
+                     "Protection Area", "Protection Areas",
                      "Zone Spéciale de Conservation",
                      "Zone de Protection Spéciale",
-                     "Protected Landscape", "Managed Resource"]
+                     "Protected Landscape", "Managed Resource",
+                     "Ramsar", "conservatory of natural areas",
+                     "Conservatoire d'Espaces Naturels",
+                     "Regional Nature Park", "Parc Naturel Régional"]
 
   unassigned:
     label: "Unassigned status"

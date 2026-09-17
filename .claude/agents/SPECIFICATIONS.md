@@ -213,6 +213,23 @@ Each raster layer is transformed into a [0–1] score via a transformation funct
 
 Transformation function parameters are configurable in the interface (advanced panel) and exported in the results report to ensure reproducibility.
 
+**Provisioning ES calibration.** The Gaussian's default (mean=0.45, std=0.35)
+is a universal fallback, not a territory-specific claim — a narrower default
+(std=0.20) was found to systematically under-score any territory whose real
+provisioning-capacity distribution did not sit near 0.45, including both
+near-pristine (low-extraction) and intensively-used candidate profiles. The
+interface offers a second, explicit **auto-calibrate** mode that centres the
+Gaussian on this territory's own observed provisioning_es mean/std instead of
+the fixed default. Auto-calibration is *off* by default: it answers a
+different question (is this pixel typical for its own territory?) than the
+fixed default (does this pixel have absolutely moderate, sustainable-use
+character?), and the latter is what the Group C use-presence threshold /
+classical_pa_mask discrimination (§4.3) assumes — a territory that is
+uniformly poor OECM material should score poorly here, not be auto-normalised
+to "optimal". Auto-calibration is intended for deliberate use (e.g. ranking
+candidate micro-sites within one already-selected territory), not as a
+general remedy for low favourability scores.
+
 ### 4.3 Criteria Structure and Functional Groups
 
 Criteria are organised into four functional groups. The land use and anthropogenic pressure layers play a **dual role**: their extreme values feed the eliminatory criteria (Group D); their intermediate values feed the co-structuring criteria (Groups A and C).

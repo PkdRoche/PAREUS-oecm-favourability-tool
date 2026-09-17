@@ -4,12 +4,12 @@
 ecosystem_condition:
   type: "sigmoid"
   inflection: 0.5
-  slope: 8.0
+  slope: 5.0   # reduced from 8 — slope 8 mapped 0.3→0.17, 0.4→0.31, compressing realistic range
 
 regulating_es:
   type: "sigmoid"
   inflection: 0.4
-  slope: 6.0
+  slope: 4.0   # reduced from 6 — softer transition for typical 0.3–0.7 regulating ES values
 
 cultural_es:
   type: "linear"
@@ -19,8 +19,13 @@ cultural_es:
 
 provisioning_es:
   type: "gaussian"
-  mean: 0.45      # optimum compatible use level
-  std: 0.20       # spread around optimum
+  mean: 0.45      # optimum compatible use level — fallback only; by default the
+                  # app auto-calibrates this to each territory's own data (see
+                  # mce_engine.compute_favourability, auto_calibrate_provisioning)
+  std: 0.35       # spread around optimum — widened from 0.20, which scored a raw
+                  # value of 0.0 at just 0.08 and 1.0 at just 0.02, systematically
+                  # crushing both near-pristine (low-extraction) and intensively-used
+                  # candidate sites regardless of their other criteria
 
 anthropogenic_pressure:
   type: "inverted_linear"

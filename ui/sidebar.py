@@ -1,22 +1,53 @@
-"""Streamlit sidebar components for parameter configuration."""
+"""Config loaders shared across the app (used by ui/tab_parameters.py).
+
+The parameter widgets themselves used to live here, rendered into the
+Streamlit sidebar — they now live in ui/tab_parameters.py as a regular tab.
+This module only keeps the two cached YAML loaders, which tab_parameters.py
+imports.
+"""
 import streamlit as st
+import yaml
+from pathlib import Path
 
 
-def render_sidebar():
+@st.cache_resource
+def load_config_defaults():
     """
-    Render sidebar with global parameters and file upload controls.
+    Load default parameter values from config/criteria_defaults.yaml.
 
-    Returns:
-        Dictionary of user-configured parameters
+    Returns
+    -------
+    dict
+        Configuration dictionary with inter-group weights, intra-group weights,
+        aggregation settings, and thresholds.
     """
-    raise NotImplementedError("Sidebar rendering not yet implemented")
+    config_path = Path(__file__).parent.parent / "config" / "criteria_defaults.yaml"
+
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        return config
+    except FileNotFoundError:
+        st.error(f"Configuration file not found: {config_path}")
+        return {}
 
 
-def load_user_weights():
+@st.cache_resource
+def load_settings():
     """
-    Allow user to adjust MCE weights via sidebar widgets.
+    Load general settings from config/settings.yaml.
 
-    Returns:
-        Dictionary of adjusted inter-group and intra-group weights
+    Returns
+    -------
+    dict
+        Settings dictionary with CRS, resolution, paths, etc.
     """
-    raise NotImplementedError("Weight adjustment UI not yet implemented")
+    settings_path = Path(__file__).parent.parent / "config" / "settings.yaml"
+
+    try:
+        with open(settings_path, 'r', encoding='utf-8') as f:
+            settings = yaml.safe_load(f)
+        return settings
+    except FileNotFoundError:
+        st.warning(f"Settings file not found: {settings_path}")
+        return {}

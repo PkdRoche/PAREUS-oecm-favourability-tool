@@ -1,0 +1,6 @@
+[server]
+# Raise upload limit to 2 GB to accommodate large rasters
+maxUploadSize = 2048
+
+[theme]
+base = "light"
