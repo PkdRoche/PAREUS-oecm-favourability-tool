@@ -1138,6 +1138,31 @@ def render_tab_module2(score_array=None, oecm_mask=None, classical_pa_mask=None,
                                      '% Eliminated', 'Rank Score']
                         )
                     ).add_to(_m_eval)
+
+                    # PA overlay on the Import & Evaluate map
+                    _pa_gdf_ie_map = st.session_state.get('pa_gdf')
+                    if _pa_gdf_ie_map is not None and len(_pa_gdf_ie_map) > 0:
+                        try:
+                            _ov_col_ie = {'strict_core': '#1B5E20', 'regulatory': '#388E3C',
+                                          'contractual': '#81C784', 'unassigned': '#9E9E9E'}
+                            _iucn_col_ie = ('IUCN_MAX' if 'IUCN_MAX' in _pa_gdf_ie_map.columns else 'IUCN_CAT')
+                            _keep_ie = [c for c in ['WDPA_NAME', 'protection_class', _iucn_col_ie, 'geometry']
+                                        if c in _pa_gdf_ie_map.columns]
+                            _pa_slim_ie = _pa_gdf_ie_map[_keep_ie].copy()
+                            _pa_slim_ie['geometry'] = _pa_slim_ie.geometry.simplify(100, preserve_topology=True)
+                            _pa_slim_ie['geometry'] = _pa_slim_ie.geometry.apply(_to_multipolygon)
+                            _pa_slim_ie = _pa_slim_ie[_pa_slim_ie.geometry.notna()].copy()
+                            _pa_slim_ie = _pa_slim_ie.to_crs('EPSG:4326')
+                            folium.GeoJson(
+                                _pa_slim_ie, name='PA Network',
+                                style_function=lambda feat, _c=dict(_ov_col_ie): {
+                                    'fillColor': _c.get(feat['properties'].get('protection_class', ''), '#9E9E9E'),
+                                    'color': '#333333', 'weight': 0.6, 'fillOpacity': 0.40,
+                                },
+                            ).add_to(_m_eval)
+                        except Exception as _e_pa_ie:
+                            st.caption(f"PA overlay unavailable: {_e_pa_ie}")
+
                     folium.LayerControl().add_to(_m_eval)
                     st_folium(_m_eval, width="100%", height=480)
                 except Exception as _e:
@@ -1670,9 +1695,9 @@ def render_module2_tab():
         # Retrieve raster paths from session state
         raster_paths = st.session_state.get('criterion_raster_paths', {})
 
-        # Check if weights sum to 1.0
+        # Check inter-group weights — only block when all are zero
         weight_sum = parameters.get('W_A', 0) + parameters.get('W_B', 0) + parameters.get('W_C', 0)
-        weights_valid = abs(weight_sum - 1.0) < 0.001
+        weights_valid = weight_sum > 0
 
         st.markdown("---")
 
@@ -1768,10 +1793,10 @@ def render_module2_tab():
         # ------------------------------------------------------------------
         if rasters_aligned:
             if not weights_valid:
-                st.error(
-                    f"Inter-group weights must sum to 1.0 (current sum: {weight_sum:.3f})"
-                )
+                st.error("Inter-group weights are all zero — set at least one weight > 0 in ② Parameters.")
             else:
+                if abs(weight_sum - 1.0) >= 0.001:
+                    st.caption(f"⚠ Inter-group weights sum to {weight_sum:.3f} — they will be normalised automatically.")
                 from modules.module2_favourability import mce_engine
 
                 aligned_arrays  = st.session_state['_aligned_arrays']
